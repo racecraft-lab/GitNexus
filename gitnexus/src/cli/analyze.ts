@@ -348,7 +348,8 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
   if (plainProgress) emitPlainProgress(0, 'Initializing...', true);
 
   const updateBar = (value: number, phaseLabel: string, phaseKey = phaseLabel) => {
-    barCurrentValue = value;
+    const nextValue = Math.min(100, Math.max(0, value, barCurrentValue));
+    barCurrentValue = nextValue;
     const phaseChanged = phaseKey !== lastPhaseKey;
     if (phaseChanged) {
       lastPhaseKey = phaseKey;
@@ -358,9 +359,9 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
     const elapsed = Math.round((Date.now() - phaseStart) / 1000);
     const display = elapsed >= 3 ? `${phaseLabel} (${elapsed}s)` : phaseLabel;
     if (plainProgress) {
-      emitPlainProgress(value, display, phaseChanged);
+      emitPlainProgress(nextValue, display, phaseChanged);
     } else {
-      bar?.update(value, { phase: display });
+      bar?.update(nextValue, { phase: display });
     }
   };
 
