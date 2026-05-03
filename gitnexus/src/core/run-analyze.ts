@@ -20,6 +20,7 @@ import {
   executeWithReusedStatement,
   closeLbug,
   loadCachedEmbeddings,
+  loadGraphFromLbug,
 } from './lbug/lbug-adapter.js';
 import { createSearchFTSIndexes } from './search/fts-indexes.js';
 import {
@@ -36,6 +37,13 @@ import { generateAIContextFiles } from '../cli/ai-context.js';
 import { EMBEDDING_TABLE_NAME } from './lbug/schema.js';
 import { STALE_HASH_SENTINEL } from './lbug/schema.js';
 import { callLLM, resolveLLMConfig, type LLMConfig } from './wiki/llm-client.js';
+import {
+  buildIncrementalManifest,
+  planIncrementalRun,
+  removeGraphNodesForIncrementalRun,
+  saveIncrementalManifest,
+  type IncrementalPlan,
+} from './ingestion/incremental-manifest.js';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -90,6 +98,8 @@ export interface AnalyzeOptions {
   clusterEnrichmentBatchSize?: number;
   /** Optional LLM config overrides for cluster enrichment. */
   clusterEnrichmentLLM?: Partial<LLMConfig>;
+  /** Reparse only changed and affected files when a prior manifest is available. */
+  incremental?: boolean;
 }
 
 export interface AnalyzeResult {
@@ -193,6 +203,15 @@ export const PHASE_LABELS: Record<string, string> = {
   embeddings: 'Generating embeddings',
   done: 'Done',
 };
+
+async function restoreLbugBackup(lbugPath: string, backupPath: string): Promise<void> {
+  try {
+    await fs.rm(lbugPath, { recursive: true, force: true });
+    await fs.rename(backupPath, lbugPath);
+  } catch {
+    /* best-effort rollback */
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Main orchestrator
@@ -316,19 +335,108 @@ export async function runFullAnalysis(
     }
   }
 
+  let incrementalPlan: IncrementalPlan | undefined;
+  let incrementalSeedGraph: Awaited<ReturnType<typeof loadGraphFromLbug>> | undefined;
+  if (options.incremental && !options.force && existingMeta && currentCommit !== '') {
+    try {
+      progress('incremental', 5, 'Planning incremental index...');
+      await initLbug(lbugPath);
+      incrementalSeedGraph = await loadGraphFromLbug();
+      await closeLbug();
+      incrementalPlan = await planIncrementalRun(
+        repoPath,
+        storagePath,
+        currentCommit,
+        incrementalSeedGraph,
+      );
+
+      if (incrementalPlan.mode === 'full') {
+        log(`Incremental analyze falling back to full rebuild: ${incrementalPlan.reason}`);
+        incrementalSeedGraph = undefined;
+      } else if (
+        incrementalPlan.reindexPaths.length === 0 &&
+        incrementalPlan.deletedPaths.length === 0
+      ) {
+        const meta = {
+          ...existingMeta,
+          repoPath,
+          lastCommit: currentCommit,
+          indexedAt: new Date().toISOString(),
+          remoteUrl: hasGitDir(repoPath) ? getRemoteUrl(repoPath) : existingMeta.remoteUrl,
+        };
+        await saveMeta(storagePath, meta);
+        await saveIncrementalManifest(storagePath, incrementalPlan.manifest);
+        const projectName = await registerRepo(repoPath, meta, {
+          name: options.registryName,
+          allowDuplicateName: options.allowDuplicateName,
+        });
+        await ensureGitNexusIgnored(repoPath);
+        return {
+          repoName: projectName,
+          repoPath,
+          stats: meta.stats ?? {},
+        };
+      } else {
+        const removed = removeGraphNodesForIncrementalRun(incrementalSeedGraph, [
+          ...incrementalPlan.reindexPaths,
+          ...incrementalPlan.deletedPaths,
+        ]);
+        log(
+          `Incremental analyze: ${incrementalPlan.reindexPaths.length} file(s) to re-index, ` +
+            `${incrementalPlan.deletedPaths.length} deleted, ${removed} stale graph node(s) removed.`,
+        );
+      }
+    } catch (err: any) {
+      log(
+        `Warning: incremental planning failed (${err?.message ?? String(err)}). ` +
+          'Falling back to full rebuild.',
+      );
+      incrementalPlan = undefined;
+      incrementalSeedGraph = undefined;
+      try {
+        await closeLbug();
+      } catch {
+        /* swallow */
+      }
+    }
+  }
+
   // ── Phase 1: Full Pipeline (0–60%) ────────────────────────────────
   const clusterEnrichment = await resolveClusterEnrichment(options, log);
+  const incrementalPipelineOptions =
+    incrementalPlan?.mode === 'incremental' && incrementalSeedGraph
+      ? {
+          initialGraph: incrementalSeedGraph,
+          reindexPaths: incrementalPlan.reindexPaths,
+        }
+      : undefined;
   const pipelineResult = await runPipelineFromRepo(repoPath, (p) => {
     const phaseLabel = PHASE_LABELS[p.phase] || p.phase;
     const scaled = Math.round(p.percent * 0.6);
     const message = p.detail ? `${p.message || phaseLabel} (${p.detail})` : p.message || phaseLabel;
     progress(p.phase, scaled, message);
-  }, clusterEnrichment ? { clusterEnrichment } : undefined);
+  }, {
+    ...(clusterEnrichment ? { clusterEnrichment } : {}),
+    ...(incrementalPipelineOptions ?? {}),
+  });
 
   // ── Phase 2: LadybugDB (60–85%) ──────────────────────────────────
   progress('lbug', 60, 'Loading into LadybugDB...');
 
   await closeLbug();
+  const lbugBackupPath =
+    incrementalPlan?.mode === 'incremental' ? `${lbugPath}.incremental-backup` : undefined;
+  let lbugBackupCreated = false;
+  if (lbugBackupPath) {
+    try {
+      await fs.rm(lbugBackupPath, { recursive: true, force: true });
+      await fs.copyFile(lbugPath, lbugBackupPath);
+      lbugBackupCreated = true;
+    } catch {
+      // Missing old DB or backup copy failure should not block analysis. The
+      // normal error path still surfaces the real write failure if one occurs.
+    }
+  }
   const lbugFiles = [lbugPath, `${lbugPath}.wal`, `${lbugPath}.lock`];
   for (const f of lbugFiles) {
     try {
@@ -503,6 +611,10 @@ export async function runFullAnalysis(
       },
     };
     await saveMeta(storagePath, meta);
+    await saveIncrementalManifest(
+      storagePath,
+      incrementalPlan?.manifest ?? (await buildIncrementalManifest(repoPath, currentCommit)),
+    );
     // Forward the --name alias and the registry-collision bypass bit.
     // `allowDuplicateName` is its own concern — independent from the
     // pipeline `force` above. The CLI maps it from
@@ -553,6 +665,13 @@ export async function runFullAnalysis(
 
     // ── Close LadybugDB ──────────────────────────────────────────────
     await closeLbug();
+    if (lbugBackupPath) {
+      try {
+        await fs.rm(lbugBackupPath, { recursive: true, force: true });
+      } catch {
+        /* best-effort cleanup */
+      }
+    }
 
     progress('done', 100, 'Done');
 
@@ -568,6 +687,9 @@ export async function runFullAnalysis(
       await closeLbug();
     } catch {
       /* swallow */
+    }
+    if (lbugBackupPath && lbugBackupCreated) {
+      await restoreLbugBackup(lbugPath, lbugBackupPath);
     }
     throw err;
   }

@@ -31,7 +31,12 @@ export const cobolPhase: PipelinePhase<CobolOutput> = {
   ): Promise<CobolOutput> {
     const { scannedFiles, allPathSet } = getPhaseOutput<StructureOutput>(deps, 'structure');
 
-    const cobolScanned = scannedFiles.filter((f) => isCobolFile(f.path) || isJclFile(f.path));
+    const reindexPaths = ctx.options?.reindexPaths ? new Set(ctx.options.reindexPaths) : undefined;
+    const cobolScanned = scannedFiles.filter(
+      (f) =>
+        (reindexPaths === undefined || reindexPaths.has(f.path)) &&
+        (isCobolFile(f.path) || isJclFile(f.path)),
+    );
 
     if (cobolScanned.length === 0) {
       return { programs: 0, paragraphs: 0, sections: 0 };

@@ -19,6 +19,7 @@ describe('CLI help surface', () => {
     const result = runHelp('analyze');
 
     expect(result.status).toBe(0);
+    expect(result.stdout).toContain('--incremental');
     expect(result.stdout).toContain('--enrich-clusters');
     expect(result.stdout).toContain('--cluster-enrichment-batch-size <n>');
     expect(result.stdout).toContain('GITNEXUS_CLUSTER_ENRICHMENT=1');

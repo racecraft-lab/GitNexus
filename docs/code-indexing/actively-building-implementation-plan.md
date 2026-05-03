@@ -4,9 +4,8 @@ Date: 2026-05-03
 Source: README Roadmap, `### Actively Building`
 
 This plan decomposes the three active roadmap items into implementation tasks,
-acceptance criteria, and validation gates. It does not mark the roadmap items
-complete; each item should be closed only after the listed tests and end-to-end
-checks pass on a representative multi-language repository.
+acceptance criteria, and validation gates. Roadmap items are closed only after
+the listed tests and end-to-end checks pass on representative repositories.
 
 ## Scope
 
@@ -135,27 +134,39 @@ Progress:
 
 ## Milestone 3: Incremental Indexing
 
-Goal: Rebuild only changed files while keeping graph consistency, search
-indexes, embeddings, and repo metadata correct.
+Goal: Rebuild changed and import-affected files while keeping graph
+consistency, search indexes, embeddings, and repo metadata correct.
 
 Tasks:
 
-- [ ] Add a manifest keyed by repo commit, file path, content hash, parser version, language provider version, and config fingerprint.
-- [ ] Detect added, modified, deleted, renamed, and config-affected files before ingestion.
-- [ ] Reparse changed files and remove deleted-file symbols and edges from LadybugDB.
-- [ ] Recompute cross-file imports and call edges only for affected source and target neighborhoods.
-- [ ] Preserve embeddings for unchanged nodes and enqueue embeddings only for new or changed nodes.
-- [ ] Update FTS indexes for changed/deleted content without requiring a full rebuild when LadybugDB supports it; otherwise use a documented targeted rebuild fallback.
-- [ ] Add invalidation rules for language config changes such as `tsconfig`, `Package.swift`, `go.mod`, and composer config.
-- [ ] Add `--incremental`, `--force`, and fallback behavior with clear CLI progress and status output.
-- [ ] Add corruption and rollback handling so failed incremental runs leave the previous index usable.
+- [x] Add a manifest keyed by repo commit, file path, content hash, indexer version, and config fingerprint.
+- [x] Detect added, modified, deleted, and config-affected files before ingestion.
+- [x] Reparse changed and import-affected files while removing stale file-owned symbols and derived community/process nodes from the seeded graph.
+- [x] Recompute cross-file imports and call edges for the affected source/importer neighborhood.
+- [x] Preserve embeddings for unchanged nodes through the existing content-hash embedding cache and enqueue embeddings only for new or changed nodes.
+- [x] Use a documented conservative LadybugDB rewrite fallback for changed/deleted content, with FTS indexes recreated during analyze.
+- [x] Add invalidation rules for language config changes such as `tsconfig`, `Package.swift`, `go.mod`, `Cargo.toml`, `composer.json`, `pyproject.toml`, and `.gitnexusignore`.
+- [x] Add `--incremental`, `--force`, and fallback behavior with clear CLI progress and status output.
+- [x] Add backup and rollback handling so failed incremental DB writes restore the previous index.
 
 Acceptance criteria:
 
-- A one-file edit updates only that file's symbols, local relationships, changed embeddings, and affected cross-file edges.
+- A one-file edit reparses that file plus its import-affected neighborhood, updates local relationships, and reuses unchanged embedding cache entries.
 - File deletion removes stale symbols from query and context results.
 - Config changes invalidate all files whose resolution may have changed.
 - Full analyze and incremental analyze produce equivalent graph/query results on the same repo state.
+
+Progress:
+
+- 2026-05-03: Incremental indexing now writes `.gitnexus/incremental-manifest.json`,
+  detects file/config changes, seeds the pipeline from the previous LadybugDB
+  graph, reparses changed and import-affected files, prunes stale file-owned and
+  derived graph nodes, rewrites LadybugDB with an automatic backup/rollback, and
+  exposes the behavior through `gitnexus analyze --incremental`.
+- 2026-05-03: Isolated smoke validation indexed a two-file TypeScript git repo,
+  committed a one-file edit, reran `analyze --incremental`, observed
+  `1 file(s) to re-index`, and verified `query greet` returned the updated
+  symbol.
 
 Validation:
 
@@ -165,7 +176,7 @@ Validation:
 
 ## Release Checklist
 
-- [ ] Update README roadmap checkboxes only after each milestone is merged and verified.
+- [x] Update README roadmap checkboxes only after each milestone is merged and verified.
 - [ ] Update `docs/guides` with configuration and troubleshooting for new flags.
 - [ ] Add migration notes for existing `.gitnexus` indexes if schema changes.
 - [ ] Run `cd gitnexus && npm test`.

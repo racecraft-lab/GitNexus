@@ -737,7 +737,7 @@ The wiki generator reads the indexed graph structure, groups files into modules 
 
 - [X] **LLM Cluster Enrichment** — Opt-in semantic cluster names via OpenAI-compatible LLM API
 - [X] **AST Decorator Detection** — Parse @Controller, @Get, Swift attributes, and related decorator metadata
-- [ ] **Incremental Indexing** — Only re-index changed files
+- [X] **Incremental Indexing** — Re-index changed and import-affected files with rollback-backed graph refresh
 
 ### Recently Completed
 

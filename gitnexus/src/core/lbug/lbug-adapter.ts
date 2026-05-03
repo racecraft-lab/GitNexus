@@ -6,6 +6,7 @@ import { finished } from 'stream/promises';
 import path from 'path';
 import lbug from '@ladybugdb/core';
 import { KnowledgeGraph } from '../graph/types.js';
+import { createKnowledgeGraph } from '../graph/graph.js';
 import {
   NODE_TABLES,
   REL_TABLE_NAME,
@@ -552,6 +553,90 @@ const escapeTableName = (table: string): string => {
   return BACKTICK_TABLES.has(table) ? `\`${table}\`` : table;
 };
 
+const NODE_SELECT_COLUMNS: Record<string, string[]> = {
+  File: ['id', 'name', 'filePath', 'content'],
+  Folder: ['id', 'name', 'filePath'],
+  Function: ['id', 'name', 'filePath', 'startLine', 'endLine', 'isExported', 'content', 'description'],
+  Class: ['id', 'name', 'filePath', 'startLine', 'endLine', 'isExported', 'content', 'description'],
+  Interface: ['id', 'name', 'filePath', 'startLine', 'endLine', 'isExported', 'content', 'description'],
+  Method: [
+    'id',
+    'name',
+    'filePath',
+    'startLine',
+    'endLine',
+    'isExported',
+    'content',
+    'description',
+    'parameterCount',
+    'returnType',
+  ],
+  CodeElement: [
+    'id',
+    'name',
+    'filePath',
+    'startLine',
+    'endLine',
+    'isExported',
+    'content',
+    'description',
+  ],
+  Community: [
+    'id',
+    'label',
+    'heuristicLabel',
+    'keywords',
+    'description',
+    'enrichedBy',
+    'cohesion',
+    'symbolCount',
+  ],
+  Process: [
+    'id',
+    'label',
+    'heuristicLabel',
+    'processType',
+    'stepCount',
+    'communities',
+    'entryPointId',
+    'terminalId',
+  ],
+  Route: ['id', 'name', 'filePath', 'responseKeys', 'errorKeys', 'middleware'],
+  Tool: ['id', 'name', 'filePath', 'description'],
+  Section: ['id', 'name', 'filePath', 'startLine', 'endLine', 'level', 'content', 'description'],
+};
+
+const CODE_ELEMENT_COLUMNS = [
+  'id',
+  'name',
+  'filePath',
+  'startLine',
+  'endLine',
+  'content',
+  'description',
+];
+
+const getNodeSelectColumns = (table: string): string[] =>
+  NODE_SELECT_COLUMNS[table] ?? CODE_ELEMENT_COLUMNS;
+
+const graphRowValue = (row: any, key: string, index: number): any => row?.[key] ?? row?.[index];
+
+const rowToNodeProperties = (table: string, row: any, columns: string[]): Record<string, any> => {
+  const props: Record<string, any> = {};
+  columns.forEach((column, index) => {
+    const value = graphRowValue(row, column, index);
+    if (value !== undefined && value !== null) props[column] = value;
+  });
+
+  // Graph nodes expose a generic `name` property. Community/Process tables
+  // store the human-readable value as `label`, so hydrate both for in-memory
+  // algorithms that expect `properties.name`.
+  if (props.name === undefined && typeof props.label === 'string') props.name = props.label;
+  if (props.filePath === undefined) props.filePath = '';
+
+  return props;
+};
+
 /** Fallback: insert relationships one-by-one if COPY fails */
 const fallbackRelationshipInserts = async (
   validRelLines: string[],
@@ -785,6 +870,79 @@ export const executeQuery = async (cypher: string): Promise<any[]> => {
   const result = Array.isArray(queryResult) ? queryResult[0] : queryResult;
   const rows = await result.getAll();
   return rows;
+};
+
+/**
+ * Hydrate the existing LadybugDB graph into the in-memory KnowledgeGraph shape.
+ *
+ * Used by conservative incremental indexing: the previous graph is loaded,
+ * stale file-owned nodes are removed, changed files are reparsed, and derived
+ * community/process nodes are recomputed before the database is rewritten.
+ */
+export const loadGraphFromLbug = async (): Promise<KnowledgeGraph> => {
+  if (!conn) {
+    throw new Error('LadybugDB not initialized. Call initLbug first.');
+  }
+
+  const graph = createKnowledgeGraph();
+
+  for (const tableName of NODE_TABLES) {
+    const tn = escapeTableName(tableName);
+    const columns = getNodeSelectColumns(tableName);
+    const select = columns.map((column) => `n.${column} AS ${column}`).join(', ');
+
+    try {
+      const rows = await executeQuery(`MATCH (n:${tn}) RETURN ${select}`);
+      for (const row of rows) {
+        const id = graphRowValue(row, 'id', 0);
+        if (typeof id !== 'string' || id.length === 0) continue;
+        graph.addNode({
+          id,
+          label: tableName as any,
+          properties: rowToNodeProperties(tableName, row, columns) as any,
+        });
+      }
+    } catch {
+      // Legacy indexes can be missing newer optional tables. Skip those and
+      // let the next successful analyze write the current schema.
+    }
+  }
+
+  try {
+    const rows = await executeQuery(
+      `MATCH (a)-[r:${REL_TABLE_NAME}]->(b) ` +
+        `RETURN a.id AS sourceId, b.id AS targetId, r.type AS type, ` +
+        `r.confidence AS confidence, r.reason AS reason, r.step AS step`,
+    );
+    for (const row of rows) {
+      const sourceId = row.sourceId ?? row[0];
+      const targetId = row.targetId ?? row[1];
+      const type = row.type ?? row[2];
+      if (
+        typeof sourceId !== 'string' ||
+        typeof targetId !== 'string' ||
+        typeof type !== 'string'
+      ) {
+        continue;
+      }
+      const reason = row.reason ?? row[4];
+      const step = Number(row.step ?? row[5] ?? 0);
+      graph.addRelationship({
+        id: `${type}:${sourceId}->${targetId}:${reason ?? ''}:${Number.isFinite(step) ? step : 0}`,
+        sourceId,
+        targetId,
+        type: type as any,
+        confidence: Number(row.confidence ?? row[3] ?? 1.0),
+        reason: String(reason ?? ''),
+        ...(Number.isFinite(step) ? { step } : {}),
+      });
+    }
+  } catch {
+    // A schema without relationships is still a valid seed; downstream phases
+    // will recreate relationships from changed files and derived graph passes.
+  }
+
+  return graph;
 };
 
 export const streamQuery = async (

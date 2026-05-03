@@ -16,6 +16,7 @@
  */
 
 import { createKnowledgeGraph } from '../graph/graph.js';
+import type { KnowledgeGraph } from '../graph/types.js';
 import { type PipelineProgress } from 'gitnexus-shared';
 import { PipelineResult } from '../../types/pipeline.js';
 import {
@@ -65,6 +66,18 @@ export interface PipelineOptions {
     llmClient: LLMClient;
     batchSize?: number;
   };
+  /**
+   * Existing graph seed for conservative incremental analyze runs. The runner
+   * mutates this graph in place by adding current file structure, reparsed
+   * symbols, derived communities, and processes.
+   */
+  initialGraph?: KnowledgeGraph;
+  /**
+   * Current file paths that should be reparsed in an incremental run. Scan and
+   * structure still see the full repository so path-based resolution remains
+   * correct, but expensive source parsing is restricted to this set.
+   */
+  reindexPaths?: readonly string[];
 }
 
 // ── Phase registry ─────────────────────────────────────────────────────────
@@ -108,7 +121,7 @@ export const runPipelineFromRepo = async (
   onProgress: (progress: PipelineProgress) => void,
   options?: PipelineOptions,
 ): Promise<PipelineResult> => {
-  const graph = createKnowledgeGraph();
+  const graph = options?.initialGraph ?? createKnowledgeGraph();
   const pipelineStart = Date.now();
 
   const phases = buildPhaseList(options);

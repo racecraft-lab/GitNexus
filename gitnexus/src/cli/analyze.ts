@@ -95,6 +95,7 @@ function ensureHeap(): boolean {
 
 export interface AnalyzeOptions {
   force?: boolean;
+  incremental?: boolean;
   embeddings?: boolean;
   /**
    * Explicitly drop existing embeddings on rebuild instead of preserving
@@ -351,6 +352,7 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
         // needs a fresh pipelineResult. Has no bearing on the registry
         // collision guard (see allowDuplicateName below).
         force: options?.force || options?.skills,
+        incremental: options?.incremental,
         embeddings: options?.embeddings,
         dropEmbeddings: options?.dropEmbeddings,
         skipGit: options?.skipGit,

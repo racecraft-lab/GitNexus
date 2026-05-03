@@ -23,6 +23,7 @@ program
   .command('analyze [path]')
   .description('Index a repository (full analysis)')
   .option('-f, --force', 'Force full re-index even if up to date')
+  .option('--incremental', 'Re-index only changed and affected files when a prior manifest exists')
   .option('--embeddings', 'Enable embedding generation for semantic search (off by default)')
   .option(
     '--drop-embeddings',

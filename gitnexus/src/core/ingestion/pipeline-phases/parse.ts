@@ -95,10 +95,15 @@ export const parsePhase: PipelinePhase<ParseOutput> = {
       deps,
       'structure',
     );
+    const reindexPaths = ctx.options?.reindexPaths ? new Set(ctx.options.reindexPaths) : undefined;
+    const parseScannedFiles =
+      reindexPaths === undefined
+        ? scannedFiles
+        : scannedFiles.filter((file) => reindexPaths.has(file.path));
 
     const result = await runChunkedParseAndResolve(
       ctx.graph,
-      scannedFiles,
+      parseScannedFiles,
       allPaths,
       totalFiles,
       ctx.repoPath,
