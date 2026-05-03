@@ -93,6 +93,50 @@ describe('run-analyze module', () => {
   });
 });
 
+describe('_shouldUseAnalyzeFastPath', () => {
+  const meta = (overrides: Partial<RepoMeta> = {}): RepoMeta => ({
+    repoPath: '/repo',
+    lastCommit: 'abc123',
+    indexedAt: '2026-05-03T00:00:00.000Z',
+    stats: { embeddings: 10 },
+    ...overrides,
+  });
+
+  it('uses the fast path for unchanged git repos', async () => {
+    const { _shouldUseAnalyzeFastPath } = await import('../../src/core/run-analyze.js');
+
+    expect(_shouldUseAnalyzeFastPath(meta(), 'abc123', {})).toBe(true);
+  });
+
+  it('rebuilds when embeddings are explicitly requested but missing', async () => {
+    const { _shouldUseAnalyzeFastPath } = await import('../../src/core/run-analyze.js');
+
+    expect(
+      _shouldUseAnalyzeFastPath(meta({ stats: { embeddings: 0 } }), 'abc123', {
+        embeddings: true,
+      }),
+    ).toBe(false);
+  });
+
+  it('keeps the fast path when embeddings are requested and already present', async () => {
+    const { _shouldUseAnalyzeFastPath } = await import('../../src/core/run-analyze.js');
+
+    expect(
+      _shouldUseAnalyzeFastPath(meta({ stats: { embeddings: 123 } }), 'abc123', {
+        embeddings: true,
+      }),
+    ).toBe(true);
+  });
+
+  it('does not fast-path forced, changed, or non-git analyses', async () => {
+    const { _shouldUseAnalyzeFastPath } = await import('../../src/core/run-analyze.js');
+
+    expect(_shouldUseAnalyzeFastPath(meta(), 'abc123', { force: true })).toBe(false);
+    expect(_shouldUseAnalyzeFastPath(meta(), 'def456', {})).toBe(false);
+    expect(_shouldUseAnalyzeFastPath(meta({ lastCommit: '' }), '', {})).toBe(false);
+  });
+});
+
 describe('deriveEmbeddingMode', () => {
   // Default `analyze` on a repo with existing embeddings: must preserve, must
   // NOT regenerate, must load the cache so phase 3.5 can re-insert vectors.

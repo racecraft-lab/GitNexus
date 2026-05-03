@@ -30,6 +30,7 @@ import {
   ensureGitNexusIgnored,
   registerRepo,
   cleanupOldKuzuFiles,
+  type RepoMeta,
 } from '../storage/repo-manager.js';
 import { getCurrentCommit, getRemoteUrl, hasGitDir, getInferredRepoName } from '../storage/git.js';
 import type { CachedEmbedding } from './embeddings/types.js';
@@ -116,6 +117,25 @@ export interface AnalyzeResult {
   alreadyUpToDate?: boolean;
   /** The raw pipeline result — only populated when needed by callers (e.g. skill generation). */
   pipelineResult?: any;
+}
+
+export function _shouldUseAnalyzeFastPath(
+  existingMeta: RepoMeta | null,
+  currentCommit: string,
+  options: AnalyzeOptions,
+): boolean {
+  if (!existingMeta || options.force || existingMeta.lastCommit !== currentCommit) {
+    return false;
+  }
+
+  // Non-git folders have currentCommit = ''. Always rebuild since we cannot
+  // prove the working tree is unchanged.
+  if (currentCommit === '') {
+    return false;
+  }
+
+  const existingEmbeddingCount = existingMeta.stats?.embeddings ?? 0;
+  return !(options.embeddings && existingEmbeddingCount === 0);
 }
 
 /** Threshold: auto-skip embeddings for repos with more nodes than this */
@@ -268,21 +288,18 @@ export async function runFullAnalysis(
   const existingMeta = await loadMeta(storagePath);
 
   // ── Early-return: already up to date ──────────────────────────────
-  if (existingMeta && !options.force && existingMeta.lastCommit === currentCommit) {
-    // Non-git folders have currentCommit = '' — always rebuild since we can't detect changes
-    if (currentCommit !== '') {
-      await ensureGitNexusIgnored(repoPath);
-      const repoName = await registerRepo(repoPath, existingMeta, {
-        name: options.registryName,
-        allowDuplicateName: options.allowDuplicateName,
-      });
-      return {
-        repoName,
-        repoPath,
-        stats: existingMeta.stats ?? {},
-        alreadyUpToDate: true,
-      };
-    }
+  if (_shouldUseAnalyzeFastPath(existingMeta, currentCommit, options)) {
+    await ensureGitNexusIgnored(repoPath);
+    const repoName = await registerRepo(repoPath, existingMeta, {
+      name: options.registryName,
+      allowDuplicateName: options.allowDuplicateName,
+    });
+    return {
+      repoName,
+      repoPath,
+      stats: existingMeta.stats ?? {},
+      alreadyUpToDate: true,
+    };
   }
 
   // ── Cache embeddings from existing index before rebuild ────────────
