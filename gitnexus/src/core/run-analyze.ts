@@ -204,6 +204,24 @@ export const PHASE_LABELS: Record<string, string> = {
   done: 'Done',
 };
 
+const PIPELINE_PROGRESS_RANGES: Record<string, readonly [number, number]> = {
+  extracting: [0, 9],
+  structure: [9, 12],
+  parsing: [12, 49],
+  imports: [49, 50],
+  calls: [49, 50],
+  heritage: [50, 50],
+  communities: [50, 56],
+  processes: [56, 60],
+  complete: [60, 60],
+};
+
+export function scalePipelineProgress(phase: string, percent: number): number {
+  const [start, end] = PIPELINE_PROGRESS_RANGES[phase] ?? [0, 60];
+  const clamped = Number.isFinite(percent) ? Math.min(100, Math.max(0, percent)) : 0;
+  return Math.round(start + ((end - start) * clamped) / 100);
+}
+
 async function restoreLbugBackup(lbugPath: string, backupPath: string): Promise<void> {
   try {
     await fs.rm(lbugPath, { recursive: true, force: true });
@@ -412,7 +430,7 @@ export async function runFullAnalysis(
       : undefined;
   const pipelineResult = await runPipelineFromRepo(repoPath, (p) => {
     const phaseLabel = PHASE_LABELS[p.phase] || p.phase;
-    const scaled = Math.round(p.percent * 0.6);
+    const scaled = scalePipelineProgress(p.phase, p.percent);
     const message = p.detail ? `${p.message || phaseLabel} (${p.detail})` : p.message || phaseLabel;
     progress(p.phase, scaled, message);
   }, {

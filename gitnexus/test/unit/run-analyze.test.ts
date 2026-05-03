@@ -18,6 +18,27 @@ describe('run-analyze module', () => {
     expect(mod.PHASE_LABELS.parsing).toBe('Parsing code');
   });
 
+  it('scales per-phase pipeline progress monotonically', async () => {
+    const { scalePipelineProgress } = await import('../../src/core/run-analyze.js');
+    const samples: Array<[string, number]> = [
+      ['extracting', 100],
+      ['structure', 100],
+      ['parsing', 100],
+      ['imports', 0],
+      ['calls', 0],
+      ['heritage', 0],
+      ['communities', 0],
+      ['processes', 0],
+      ['complete', 100],
+    ];
+
+    const scaled = samples.map(([phase, percent]) => scalePipelineProgress(phase, percent));
+
+    expect(scaled).toEqual([...scaled].sort((a, b) => a - b));
+    expect(scaled.at(0)).toBe(9);
+    expect(scaled.at(-1)).toBe(60);
+  });
+
   it('creates .gitnexus/.gitignore on the already-up-to-date fast path (#1233)', async () => {
     const tmpRepo = await createTempDir('gitnexus-run-analyze-fast-path-');
     try {
