@@ -103,16 +103,28 @@ export async function runCrossFileBindingPropagation(
   // progress segment instead of a phase flicker. If a future change splits
   // this out into its own phase, also rename `parse-impl.ts` per-chunk
   // progress events accordingly.
-  onProgress({
-    phase: 'parsing',
-    percent: 82,
-    message: `Cross-file type propagation (${filesWithGaps}+ files)...`,
-    stats: { filesProcessed: totalFiles, totalFiles, nodesCreated: graph.nodeCount },
-  });
-
   let crossFileResolved = 0;
   const crossFileStart = Date.now();
   const astCache = createASTCache(AST_CACHE_CAP);
+  const reportCrossFileProgress = (message: string, percent: number) => {
+    onProgress({
+      phase: 'parsing',
+      percent,
+      message,
+      stats: { filesProcessed: totalFiles, totalFiles, nodesCreated: graph.nodeCount },
+    });
+  };
+  const reportCrossFileResolvedProgress = () => {
+    const estimatedWork = Math.max(filesWithGaps, 1);
+    const percent = Math.min(99, 82 + Math.floor((crossFileResolved / estimatedWork) * 17));
+    const fileNoun = crossFileResolved === 1 ? 'file' : 'files';
+    reportCrossFileProgress(
+      `Cross-file type propagation (${crossFileResolved} ${fileNoun} reprocessed; ${filesWithGaps}+ candidates)...`,
+      percent,
+    );
+  };
+
+  reportCrossFileResolvedProgress();
 
   for (const level of levels) {
     const levelCandidates: {
@@ -189,6 +201,7 @@ export async function runCrossFileBindingPropagation(
         importedRawReturnTypesMap.size > 0 ? importedRawReturnTypesMap : undefined,
       );
       crossFileResolved++;
+      reportCrossFileResolvedProgress();
     }
 
     if (crossFileResolved >= MAX_CROSS_FILE_REPROCESS) {
@@ -199,6 +212,10 @@ export async function runCrossFileBindingPropagation(
   }
 
   astCache.clear();
+  reportCrossFileProgress(
+    `Cross-file type propagation complete (${crossFileResolved} files reprocessed)`,
+    99,
+  );
 
   if (isDev) {
     const elapsed = Date.now() - crossFileStart;

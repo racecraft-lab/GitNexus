@@ -162,6 +162,50 @@ describe('runCrossFileBindingPropagation', () => {
     }
   });
 
+  it('reports progress while files are reprocessed', async () => {
+    const graph = createKnowledgeGraph();
+    const ctx = createResolutionContext();
+    const exportedTypeMap: ExportedTypeMap = new Map([
+      ['upstream.ts', new Map([['User', 'User']])],
+    ]);
+    const allPaths = ['upstream.ts', 'downstream-a.ts', 'downstream-b.ts', 'downstream-c.ts'];
+
+    ctx.importMap.set('upstream.ts', new Set());
+    for (const file of allPaths.slice(1)) {
+      const bindings = new Map();
+      bindings.set('User', { sourcePath: 'upstream.ts', exportedName: 'User' });
+      ctx.namedImportMap.set(file, bindings);
+      ctx.importMap.set(file, new Set(['upstream.ts']));
+    }
+
+    const progress: Array<{ percent: number; message: string }> = [];
+    const result = await runCrossFileBindingPropagation(
+      graph,
+      ctx,
+      exportedTypeMap,
+      new Set(allPaths),
+      allPaths.length,
+      '/repo',
+      Date.now(),
+      (event) => {
+        if (event.message.startsWith('Cross-file type propagation')) {
+          progress.push({ percent: event.percent, message: event.message });
+        }
+      },
+    );
+
+    expect(result).toBe(3);
+    expect(progress[0]).toMatchObject({
+      percent: 82,
+      message: 'Cross-file type propagation (0 files reprocessed; 1+ candidates)...',
+    });
+    expect(progress.some((event) => event.message.includes('1 file reprocessed'))).toBe(true);
+    expect(progress.at(-1)).toMatchObject({
+      percent: 99,
+      message: 'Cross-file type propagation complete (3 files reprocessed)',
+    });
+  });
+
   it('caps processing at MAX_CROSS_FILE_REPROCESS (2000)', async () => {
     const graph = createKnowledgeGraph();
     const ctx = createResolutionContext();
