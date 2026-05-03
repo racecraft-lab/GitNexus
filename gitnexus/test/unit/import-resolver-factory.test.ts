@@ -426,6 +426,32 @@ describe('swiftPackageStrategy', () => {
     const result = swiftPackageStrategy('Foundation', 'App.swift', ctx);
     expect(result).toBeNull();
   });
+
+  it('narrows explicit Swift declaration imports to the matching source file', () => {
+    const files = [
+      'Package/Sources/Models/User.swift',
+      'Package/Sources/Models/Repo.swift',
+      'Package/Sources/App/App.swift',
+    ];
+    const ctx = makeCtx(files, {
+      swiftPackageConfig: {
+        targets: new Map([['Models', 'Package/Sources/Models']]),
+      },
+    });
+    const result = swiftPackageStrategy('Models.User', 'Package/Sources/App/App.swift', ctx);
+    expect(result).toEqual({ kind: 'files', files: ['Package/Sources/Models/User.swift'] });
+  });
+
+  it('does not widen unresolved explicit Swift declaration imports to the whole target', () => {
+    const files = ['Package/Sources/Models/Repo.swift', 'Package/Sources/App/App.swift'];
+    const ctx = makeCtx(files, {
+      swiftPackageConfig: {
+        targets: new Map([['Models', 'Package/Sources/Models']]),
+      },
+    });
+    const result = swiftPackageStrategy('Models.User', 'Package/Sources/App/App.swift', ctx);
+    expect(result).toBeNull();
+  });
 });
 
 describe('rubyRequireStrategy', () => {

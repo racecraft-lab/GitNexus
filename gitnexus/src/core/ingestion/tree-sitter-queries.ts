@@ -1111,6 +1111,9 @@ export const SWIFT_QUERIES = `
 ; Protocols (mapped to interface)
 (protocol_declaration name: (type_identifier) @name) @definition.interface
 
+; Attributes / property wrappers (Swift @Annotations)
+(attribute (user_type (type_identifier) @name .)) @definition.annotation
+
 ; Type aliases
 (typealias_declaration name: (type_identifier) @name) @definition.type
 
@@ -1130,7 +1133,7 @@ export const SWIFT_QUERIES = `
 (enum_entry (simple_identifier) @name) @definition.property
 
 ; Imports
-(import_declaration (identifier (simple_identifier) @import.source)) @import
+(import_declaration (identifier) @import.source) @import
 
 ; Calls - direct function calls
 (call_expression (simple_identifier) @call.name) @call

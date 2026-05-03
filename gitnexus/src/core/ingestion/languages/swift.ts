@@ -5,7 +5,8 @@
  * LanguageProvider, following the Strategy pattern used by the pipeline.
  *
  * Key Swift traits:
- *   - importSemantics: 'wildcard-leaf' (Swift imports entire modules)
+ *   - importSemantics: 'wildcard-leaf' (Swift imports entire modules by default)
+ *   - namedBindingExtractor: explicit import kind declarations expose one imported symbol
  *   - heritageDefaultEdge: 'IMPLEMENTS' (protocols are more common than class inheritance)
  *   - implicitImportWirer: all files in the same SPM target see each other
  */
@@ -19,6 +20,7 @@ import { typeConfig as swiftConfig } from '../type-extractors/swift.js';
 import { swiftExportChecker } from '../export-detection.js';
 import { createImportResolver } from '../import-resolvers/resolver-factory.js';
 import { swiftImportConfig } from '../import-resolvers/configs/swift.js';
+import type { NamedBinding } from '../named-bindings/types.js';
 import { SWIFT_QUERIES } from '../tree-sitter-queries.js';
 import type { SwiftPackageConfig } from '../language-config.js';
 import type { SyntaxNode } from '../utils/ast-helpers.js';
@@ -118,6 +120,32 @@ function wireSwiftImplicitImports(
     }
   }
 }
+
+const swiftImportIdentifierParts = (importNode: SyntaxNode): string[] => {
+  const identifierNode = importNode.namedChildren.find((child) => child.type === 'identifier');
+  if (!identifierNode) return [];
+  return identifierNode.namedChildren
+    .filter((child) => child.type === 'simple_identifier')
+    .map((child) => child.text)
+    .filter(Boolean);
+};
+
+export const swiftImportPathPreprocessor = (
+  cleaned: string,
+  importNode: SyntaxNode,
+): string => {
+  const identifierParts = swiftImportIdentifierParts(importNode);
+  return identifierParts.length > 0 ? identifierParts.join('.') : cleaned;
+};
+
+export const extractSwiftNamedBindings = (
+  importNode: SyntaxNode,
+): NamedBinding[] | undefined => {
+  const identifierParts = swiftImportIdentifierParts(importNode);
+  if (identifierParts.length < 2) return undefined;
+  const importedName = identifierParts[identifierParts.length - 1];
+  return [{ local: importedName, exported: importedName }];
+};
 
 /** Swift init/deinit declarations have special names and Constructor label. */
 const swiftExtractFunctionName = (
@@ -263,6 +291,8 @@ export const swiftProvider = defineLanguage({
   typeConfig: swiftConfig,
   exportChecker: swiftExportChecker,
   importResolver: createImportResolver(swiftImportConfig),
+  namedBindingExtractor: extractSwiftNamedBindings,
+  importPathPreprocessor: swiftImportPathPreprocessor,
   importSemantics: 'wildcard-leaf',
   heritageDefaultEdge: 'IMPLEMENTS',
   callExtractor: createCallExtractor(swiftCallConfig),
