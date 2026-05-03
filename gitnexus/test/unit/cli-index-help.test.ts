@@ -22,6 +22,10 @@ describe('CLI help surface', () => {
     expect(result.stdout).toContain('--incremental');
     expect(result.stdout).toContain('--enrich-clusters');
     expect(result.stdout).toContain('--cluster-enrichment-batch-size <n>');
+    expect(result.stdout).toContain('GITNEXUS_EMBEDDING_HTTP_BATCH_SIZE=N');
+    expect(result.stdout).toContain('GITNEXUS_EMBEDDING_HTTP_CONCURRENCY=N');
+    expect(result.stdout).toContain('GITNEXUS_EMBEDDING_HTTP_TIMEOUT_MS=N');
+    expect(result.stdout).toContain('GITNEXUS_PROGRESS=plain');
     expect(result.stdout).toContain('GITNEXUS_CLUSTER_ENRICHMENT=1');
   });
 

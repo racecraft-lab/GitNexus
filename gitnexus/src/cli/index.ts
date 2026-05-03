@@ -73,6 +73,10 @@ program
       '  GITNEXUS_WORKER_SUB_BATCH_TIMEOUT_MS=N  Worker idle timeout in milliseconds. Default 30000.\n' +
       '  GITNEXUS_WORKER_SUB_BATCH_MAX_BYTES=N  Worker job byte budget. Default 8388608.\n' +
       '  GITNEXUS_EMBEDDING_THREADS=N  Limit local ONNX CPU threads for --embeddings.\n' +
+      '  GITNEXUS_EMBEDDING_HTTP_BATCH_SIZE=N  Texts per HTTP embedding request. Default 64.\n' +
+      '  GITNEXUS_EMBEDDING_HTTP_CONCURRENCY=N  Concurrent HTTP embedding requests. Default 1.\n' +
+      '  GITNEXUS_EMBEDDING_HTTP_TIMEOUT_MS=N  HTTP embedding request timeout. Default 30000.\n' +
+      '  GITNEXUS_PROGRESS=plain  Print durable newline progress logs instead of a TTY bar.\n' +
       '  GITNEXUS_SEMANTIC_EXACT_SCAN_LIMIT=N  Max embedding chunks for exact-scan fallback. Default 10000.\n' +
       '  GITNEXUS_CLUSTER_ENRICHMENT=1  Enable opt-in LLM cluster enrichment.\n' +
       '  GITNEXUS_CLUSTER_ENRICHMENT_MODEL=...  Override the cluster enrichment LLM model.\n' +

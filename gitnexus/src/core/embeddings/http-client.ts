@@ -5,10 +5,11 @@
  * Imported by both the core embedder (batch) and MCP embedder (query).
  */
 
-const HTTP_TIMEOUT_MS = 30_000;
+const DEFAULT_HTTP_TIMEOUT_MS = 30_000;
 const HTTP_MAX_RETRIES = 2;
 const HTTP_RETRY_BACKOFF_MS = 1_000;
-const HTTP_BATCH_SIZE = 64;
+const DEFAULT_HTTP_BATCH_SIZE = 64;
+const DEFAULT_HTTP_CONCURRENCY = 1;
 const DEFAULT_DIMS = 384;
 
 interface HttpConfig {
@@ -16,7 +17,23 @@ interface HttpConfig {
   model: string;
   apiKey: string;
   dimensions?: number;
+  timeoutMs: number;
+  httpBatchSize: number;
+  httpConcurrency: number;
 }
+
+const parsePositiveInt = (
+  name: string,
+  value: string | undefined,
+  fallback: number,
+): number => {
+  if (value === undefined) return fallback;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer, got "${value}"`);
+  }
+  return parsed;
+};
 
 /**
  * Build config from the current process.env snapshot.
@@ -43,6 +60,21 @@ const readConfig = (): HttpConfig | null => {
     model,
     apiKey: process.env.GITNEXUS_EMBEDDING_API_KEY ?? 'unused',
     dimensions,
+    timeoutMs: parsePositiveInt(
+      'GITNEXUS_EMBEDDING_HTTP_TIMEOUT_MS',
+      process.env.GITNEXUS_EMBEDDING_HTTP_TIMEOUT_MS,
+      DEFAULT_HTTP_TIMEOUT_MS,
+    ),
+    httpBatchSize: parsePositiveInt(
+      'GITNEXUS_EMBEDDING_HTTP_BATCH_SIZE',
+      process.env.GITNEXUS_EMBEDDING_HTTP_BATCH_SIZE,
+      DEFAULT_HTTP_BATCH_SIZE,
+    ),
+    httpConcurrency: parsePositiveInt(
+      'GITNEXUS_EMBEDDING_HTTP_CONCURRENCY',
+      process.env.GITNEXUS_EMBEDDING_HTTP_CONCURRENCY,
+      DEFAULT_HTTP_CONCURRENCY,
+    ),
   };
 };
 
@@ -89,6 +121,7 @@ const httpEmbedBatch = async (
   batch: string[],
   model: string,
   apiKey: string,
+  timeoutMs: number,
   batchIndex = 0,
   attempt = 0,
 ): Promise<EmbeddingItem[]> => {
@@ -96,7 +129,7 @@ const httpEmbedBatch = async (
   try {
     resp = await fetch(url, {
       method: 'POST',
-      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${apiKey}`,
@@ -109,14 +142,14 @@ const httpEmbedBatch = async (
     const isTimeout = err instanceof DOMException && err.name === 'TimeoutError';
     if (isTimeout) {
       throw new Error(
-        `Embedding request timed out after ${HTTP_TIMEOUT_MS}ms (${safeUrl(url)}, batch ${batchIndex})`,
+        `Embedding request timed out after ${timeoutMs}ms (${safeUrl(url)}, batch ${batchIndex})`,
       );
     }
     // DNS, connection errors — retry with backoff
     if (attempt < HTTP_MAX_RETRIES) {
       const delay = HTTP_RETRY_BACKOFF_MS * (attempt + 1);
       await new Promise((r) => setTimeout(r, delay));
-      return httpEmbedBatch(url, batch, model, apiKey, batchIndex, attempt + 1);
+      return httpEmbedBatch(url, batch, model, apiKey, timeoutMs, batchIndex, attempt + 1);
     }
     const reason = err instanceof Error ? err.message : String(err);
     throw new Error(`Embedding request failed (${safeUrl(url)}, batch ${batchIndex}): ${reason}`);
@@ -127,7 +160,7 @@ const httpEmbedBatch = async (
     if ((status === 429 || status >= 500) && attempt < HTTP_MAX_RETRIES) {
       const delay = HTTP_RETRY_BACKOFF_MS * (attempt + 1);
       await new Promise((r) => setTimeout(r, delay));
-      return httpEmbedBatch(url, batch, model, apiKey, batchIndex, attempt + 1);
+      return httpEmbedBatch(url, batch, model, apiKey, timeoutMs, batchIndex, attempt + 1);
     }
     throw new Error(`Embedding endpoint returned ${status} (${safeUrl(url)}, batch ${batchIndex})`);
   }
@@ -151,11 +184,36 @@ export const httpEmbed = async (texts: string[]): Promise<Float32Array[]> => {
 
   const url = `${config.baseUrl}/embeddings`;
   const allVectors: Float32Array[] = [];
+  const batches: string[][] = [];
 
-  for (let i = 0; i < texts.length; i += HTTP_BATCH_SIZE) {
-    const batch = texts.slice(i, i + HTTP_BATCH_SIZE);
-    const batchIndex = Math.floor(i / HTTP_BATCH_SIZE);
-    const items = await httpEmbedBatch(url, batch, config.model, config.apiKey, batchIndex);
+  for (let i = 0; i < texts.length; i += config.httpBatchSize) {
+    batches.push(texts.slice(i, i + config.httpBatchSize));
+  }
+
+  const batchResults = new Array<EmbeddingItem[]>(batches.length);
+  let nextBatchIndex = 0;
+  const workerCount = Math.min(config.httpConcurrency, batches.length);
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextBatchIndex < batches.length) {
+        const batchIndex = nextBatchIndex++;
+        const batch = batches[batchIndex];
+        batchResults[batchIndex] = await httpEmbedBatch(
+          url,
+          batch,
+          config.model,
+          config.apiKey,
+          config.timeoutMs,
+          batchIndex,
+        );
+      }
+    }),
+  );
+
+  for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+    const batch = batches[batchIndex];
+    const items = batchResults[batchIndex];
 
     if (items.length !== batch.length) {
       throw new Error(
@@ -198,7 +256,7 @@ export const httpEmbedQuery = async (text: string): Promise<number[]> => {
   if (!config) throw new Error('HTTP embedding not configured');
 
   const url = `${config.baseUrl}/embeddings`;
-  const items = await httpEmbedBatch(url, [text], config.model, config.apiKey);
+  const items = await httpEmbedBatch(url, [text], config.model, config.apiKey, config.timeoutMs);
   if (!items.length) {
     throw new Error(`Embedding endpoint returned empty response (${safeUrl(url)})`);
   }

@@ -275,29 +275,37 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
     console.log(`${maxFileSizeBanner}\n`);
   }
 
-  // ── CLI progress bar setup ─────────────────────────────────────────
-  const bar = new cliProgress.SingleBar(
-    {
-      format: '  {bar} {percentage}% | {phase}',
-      barCompleteChar: '\u2588',
-      barIncompleteChar: '\u2591',
-      hideCursor: true,
-      barGlue: '',
-      autopadding: true,
-      clearOnComplete: false,
-      stopOnComplete: false,
-    },
-    cliProgress.Presets.shades_grey,
-  );
+  // ── CLI progress setup ─────────────────────────────────────────────
+  // TTY users get a single-line progress bar. Non-TTY automation needs durable
+  // newline logs; carriage-return progress bars are invisible in Codex/API logs.
+  const plainProgress =
+    process.env.GITNEXUS_PROGRESS === 'plain' ||
+    process.env.GITNEXUS_PROGRESS === '1' ||
+    !process.stdout.isTTY;
+  const bar = plainProgress
+    ? undefined
+    : new cliProgress.SingleBar(
+        {
+          format: '  {bar} {percentage}% | {phase}',
+          barCompleteChar: '\u2588',
+          barIncompleteChar: '\u2591',
+          hideCursor: true,
+          barGlue: '',
+          autopadding: true,
+          clearOnComplete: false,
+          stopOnComplete: false,
+        },
+        cliProgress.Presets.shades_grey,
+      );
 
-  bar.start(100, 0, { phase: 'Initializing...' });
+  if (bar) bar.start(100, 0, { phase: 'Initializing...' });
 
   // Graceful SIGINT handling
   let aborted = false;
   const sigintHandler = () => {
     if (aborted) process.exit(1);
     aborted = true;
-    bar.stop();
+    bar?.stop();
     console.log('\n  Interrupted — cleaning up...');
     closeLbug()
       .catch(() => {})
@@ -311,9 +319,9 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
   const origError = console.error.bind(console);
   let barCurrentValue = 0;
   const barLog = (...args: any[]) => {
-    process.stdout.write('\x1b[2K\r');
+    if (bar) process.stdout.write('\x1b[2K\r');
     origLog(args.map((a) => (typeof a === 'string' ? a : String(a))).join(' '));
-    bar.update(barCurrentValue);
+    bar?.update(barCurrentValue);
   };
   console.log = barLog;
   console.warn = barLog;
@@ -322,22 +330,47 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
   // Track elapsed time per phase
   let lastPhaseLabel = 'Initializing...';
   let phaseStart = Date.now();
+  let lastPlainProgressAt = 0;
+  let lastPlainProgressValue = -1;
+
+  const emitPlainProgress = (value: number, phaseLabel: string, force = false) => {
+    const now = Date.now();
+    const percent = Math.max(0, Math.min(100, Math.round(value)));
+    if (!force && percent === lastPlainProgressValue && now - lastPlainProgressAt < 5_000) {
+      return;
+    }
+    lastPlainProgressAt = now;
+    lastPlainProgressValue = percent;
+    origLog(`  Progress ${percent}% | ${phaseLabel}`);
+  };
+
+  if (plainProgress) emitPlainProgress(0, 'Initializing...', true);
 
   const updateBar = (value: number, phaseLabel: string) => {
     barCurrentValue = value;
-    if (phaseLabel !== lastPhaseLabel) {
+    const phaseChanged = phaseLabel !== lastPhaseLabel;
+    if (phaseChanged) {
       lastPhaseLabel = phaseLabel;
       phaseStart = Date.now();
     }
     const elapsed = Math.round((Date.now() - phaseStart) / 1000);
     const display = elapsed >= 3 ? `${phaseLabel} (${elapsed}s)` : phaseLabel;
-    bar.update(value, { phase: display });
+    if (plainProgress) {
+      emitPlainProgress(value, display, phaseChanged);
+    } else {
+      bar?.update(value, { phase: display });
+    }
   };
 
   const elapsedTimer = setInterval(() => {
     const elapsed = Math.round((Date.now() - phaseStart) / 1000);
     if (elapsed >= 3) {
-      bar.update({ phase: `${lastPhaseLabel} (${elapsed}s)` });
+      const display = `${lastPhaseLabel} (${elapsed}s)`;
+      if (plainProgress) {
+        emitPlainProgress(barCurrentValue, display);
+      } else {
+        bar?.update({ phase: display });
+      }
     }
   }, 1000);
 
@@ -386,7 +419,7 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
       console.log = origLog;
       console.warn = origWarn;
       console.error = origError;
-      bar.stop();
+      bar?.stop();
       console.log('  Already up to date\n');
       // Safe to return without process.exit(0) — the early-return path in
       // runFullAnalysis never opens LadybugDB, so no native handles prevent exit.
@@ -460,8 +493,12 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
     console.warn = origWarn;
     console.error = origError;
 
-    bar.update(100, { phase: 'Done' });
-    bar.stop();
+    if (bar) {
+      bar.update(100, { phase: 'Done' });
+      bar.stop();
+    } else {
+      emitPlainProgress(100, 'Done', true);
+    }
 
     // ── Summary ────────────────────────────────────────────────────
     const s = result.stats;
@@ -484,7 +521,7 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
     console.log = origLog;
     console.warn = origWarn;
     console.error = origError;
-    bar.stop();
+    bar?.stop();
 
     const msg = err.message || String(err);
 
