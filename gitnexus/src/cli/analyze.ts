@@ -404,6 +404,10 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
       },
       {
         onProgress: (_phase, percent, message) => {
+          if (options?.skills && _phase === 'done' && percent >= 100) {
+            updateBar(98, 'Analysis complete', 'analysis-complete');
+            return;
+          }
           updateBar(percent, message, _phase);
         },
         onLog: barLog,

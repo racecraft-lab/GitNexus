@@ -459,10 +459,10 @@ export async function runFullAnalysis(
       progress('lbug', pct, msg);
     });
 
-    // ── Phase 3: FTS (85–90%) ─────────────────────────────────────────
+    // ── Phase 3: FTS (85–87%) ─────────────────────────────────────────
     progress('fts', 85, 'Creating search indexes...');
     await createSearchFTSIndexes();
-    progress('fts', 90, 'Search indexes ready');
+    progress('fts', 87, 'Search indexes ready');
 
     // ── Phase 3.5: Re-insert cached embeddings ────────────────────────
     if (cachedEmbeddings.length > 0) {
