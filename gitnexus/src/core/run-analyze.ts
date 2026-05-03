@@ -272,8 +272,12 @@ export async function runFullAnalysis(
     // Non-git folders have currentCommit = '' — always rebuild since we can't detect changes
     if (currentCommit !== '') {
       await ensureGitNexusIgnored(repoPath);
+      const repoName = await registerRepo(repoPath, existingMeta, {
+        name: options.registryName,
+        allowDuplicateName: options.allowDuplicateName,
+      });
       return {
-        repoName: options.registryName ?? getInferredRepoName(repoPath) ?? path.basename(repoPath),
+        repoName,
         repoPath,
         stats: existingMeta.stats ?? {},
         alreadyUpToDate: true,

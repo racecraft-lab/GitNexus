@@ -3,7 +3,12 @@ import fs from 'fs/promises';
 import path from 'path';
 import { describe, it, expect } from 'vitest';
 import { deriveEmbeddingMode } from '../../src/core/embedding-mode.js';
-import { getStoragePaths, saveMeta, type RepoMeta } from '../../src/storage/repo-manager.js';
+import {
+  getStoragePaths,
+  readRegistry,
+  saveMeta,
+  type RepoMeta,
+} from '../../src/storage/repo-manager.js';
 import { createTempDir } from '../helpers/test-db.js';
 
 describe('run-analyze module', () => {
@@ -39,9 +44,12 @@ describe('run-analyze module', () => {
     expect(scaled.at(-1)).toBe(60);
   });
 
-  it('creates .gitnexus/.gitignore on the already-up-to-date fast path (#1233)', async () => {
+  it('creates .gitnexus/.gitignore and repairs registry on the already-up-to-date fast path (#1233)', async () => {
     const tmpRepo = await createTempDir('gitnexus-run-analyze-fast-path-');
+    const tmpHome = await createTempDir('gitnexus-run-analyze-fast-path-home-');
+    const savedGitnexusHome = process.env.GITNEXUS_HOME;
     try {
+      process.env.GITNEXUS_HOME = tmpHome.dbPath;
       execSync('git init', { cwd: tmpRepo.dbPath, stdio: 'pipe' });
       execSync('git -c user.name=test -c user.email=test@test commit --allow-empty -m init', {
         cwd: tmpRepo.dbPath,
@@ -72,8 +80,15 @@ describe('run-analyze module', () => {
       await expect(
         fs.readFile(path.join(tmpRepo.dbPath, '.gitnexus', '.gitignore'), 'utf-8'),
       ).resolves.toBe('*\n');
+      const registry = await readRegistry();
+      expect(registry.some((entry) => path.resolve(entry.path) === path.resolve(tmpRepo.dbPath))).toBe(
+        true,
+      );
     } finally {
+      if (savedGitnexusHome === undefined) delete process.env.GITNEXUS_HOME;
+      else process.env.GITNEXUS_HOME = savedGitnexusHome;
       await tmpRepo.cleanup();
+      await tmpHome.cleanup();
     }
   });
 });

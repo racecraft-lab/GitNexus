@@ -416,10 +416,9 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
     );
 
     if (result.alreadyUpToDate) {
-      // Even the fast path must prove the repo is discoverable. A prior
-      // run can write meta.json and then fail before registerRepo(); in
-      // that half-finalized state, runFullAnalysis returns alreadyUpToDate
-      // on the next invocation unless we check the registry here too.
+      // Even the fast path must prove the repo is discoverable. runFullAnalysis
+      // re-registers from the existing meta on this path so a stale/missing
+      // registry entry is repaired before this assertion.
       await assertAnalysisFinalized(repoPath);
       clearInterval(elapsedTimer);
       process.removeListener('SIGINT', sigintHandler);

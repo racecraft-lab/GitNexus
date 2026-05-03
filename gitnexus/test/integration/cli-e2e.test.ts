@@ -269,7 +269,7 @@ describe('CLI end-to-end', () => {
     }
   }, 60_000);
 
-  it('already-up-to-date analyze fails when registry entry is missing (#1169)', () => {
+  it('already-up-to-date analyze repairs a missing registry entry (#1169)', () => {
     const gnHome = fs.mkdtempSync(path.join(os.tmpdir(), 'gn-1169-fastpath-home-'));
     const repo = makeMiniRepoCopy('mini-repo', 'gn-1169-fastpath-repo-');
     const repoParent = path.dirname(repo);
@@ -297,14 +297,25 @@ describe('CLI end-to-end', () => {
       expect(
         second.status,
         [
-          'second analyze timed out before proving alreadyUpToDate finalization',
+          'second analyze failed to repair alreadyUpToDate finalization',
           `stdout: ${second.stdout}`,
           `stderr: ${second.stderr}`,
         ].join('\n'),
-      ).not.toBeNull();
-      expect(`${second.stdout}${second.stderr}`).toMatch(/Analysis did not finalize/i);
-      expect(`${second.stdout}${second.stderr}`).toMatch(/registry entry/i);
-      expect(second.status).toBe(1);
+      ).toBe(0);
+      expect(`${second.stdout}${second.stderr}`).toMatch(/Already up to date/i);
+
+      const entries = JSON.parse(fs.readFileSync(path.join(gnHome, 'registry.json'), 'utf-8')) as Array<{
+        path: string;
+      }>;
+      const matchesRepo = entries.some((e) => {
+        const a = fs.realpathSync.native(e.path);
+        const b = fs.realpathSync.native(repo);
+        return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+      });
+      expect(
+        matchesRepo,
+        `registry has no repaired entry for ${repo}; entries: ${JSON.stringify(entries.map((e) => e.path))}`,
+      ).toBe(true);
     } finally {
       fs.rmSync(gnHome, { recursive: true, force: true });
       fs.rmSync(repoParent, { recursive: true, force: true });

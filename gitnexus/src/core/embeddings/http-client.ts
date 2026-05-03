@@ -106,6 +106,8 @@ interface EmbeddingItem {
   embedding: number[];
 }
 
+export type HttpEmbeddingProgressCallback = (completedTexts: number, totalTexts: number) => void;
+
 /**
  * Send a single batch of texts to the embedding endpoint with retry.
  *
@@ -176,7 +178,10 @@ const httpEmbedBatch = async (
  * @param texts - Array of texts to embed
  * @returns Array of Float32Array embedding vectors
  */
-export const httpEmbed = async (texts: string[]): Promise<Float32Array[]> => {
+export const httpEmbed = async (
+  texts: string[],
+  onProgress?: HttpEmbeddingProgressCallback,
+): Promise<Float32Array[]> => {
   if (texts.length === 0) return [];
 
   const config = readConfig();
@@ -192,6 +197,7 @@ export const httpEmbed = async (texts: string[]): Promise<Float32Array[]> => {
 
   const batchResults = new Array<EmbeddingItem[]>(batches.length);
   let nextBatchIndex = 0;
+  let completedTexts = 0;
   const workerCount = Math.min(config.httpConcurrency, batches.length);
 
   await Promise.all(
@@ -199,7 +205,7 @@ export const httpEmbed = async (texts: string[]): Promise<Float32Array[]> => {
       while (nextBatchIndex < batches.length) {
         const batchIndex = nextBatchIndex++;
         const batch = batches[batchIndex];
-        batchResults[batchIndex] = await httpEmbedBatch(
+        const items = await httpEmbedBatch(
           url,
           batch,
           config.model,
@@ -207,6 +213,9 @@ export const httpEmbed = async (texts: string[]): Promise<Float32Array[]> => {
           config.timeoutMs,
           batchIndex,
         );
+        batchResults[batchIndex] = items;
+        completedTexts += batch.length;
+        onProgress?.(completedTexts, texts.length);
       }
     }),
   );

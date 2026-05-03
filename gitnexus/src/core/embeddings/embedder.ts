@@ -106,6 +106,7 @@ let currentDevice: 'dml' | 'cuda' | 'cpu' | 'wasm' | null = null;
  * Progress callback type for model loading
  */
 export type ModelProgressCallback = (progress: ModelProgress) => void;
+export type BatchProgressCallback = (completedTexts: number, totalTexts: number) => void;
 
 /**
  * Get the current device being used for inference
@@ -315,13 +316,16 @@ export const embedText = async (text: string): Promise<Float32Array> => {
  * @param texts - Array of texts to embed
  * @returns Array of Float32Array embedding vectors
  */
-export const embedBatch = async (texts: string[]): Promise<Float32Array[]> => {
+export const embedBatch = async (
+  texts: string[],
+  onProgress?: BatchProgressCallback,
+): Promise<Float32Array[]> => {
   if (texts.length === 0) {
     return [];
   }
 
   if (isHttpMode()) {
-    return httpEmbed(texts);
+    return httpEmbed(texts, onProgress);
   }
 
   const embedder = getEmbedder();

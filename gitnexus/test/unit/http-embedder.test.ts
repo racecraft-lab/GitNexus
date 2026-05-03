@@ -223,6 +223,40 @@ describe('HTTP embedding backend', () => {
       expect(results).toHaveLength(20);
     });
 
+    it('reports HTTP batch progress as each request completes', async () => {
+      process.env.GITNEXUS_EMBEDDING_URL = 'http://test:8080/v1';
+      process.env.GITNEXUS_EMBEDDING_MODEL = 'test-model';
+      process.env.GITNEXUS_EMBEDDING_HTTP_BATCH_SIZE = '2';
+      process.env.GITNEXUS_EMBEDDING_HTTP_CONCURRENCY = '1';
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_url, opts: any) => {
+          const input = JSON.parse(opts.body).input as string[];
+          return {
+            ok: true,
+            json: async () => ({
+              data: Array.from({ length: input.length }, () => ({ embedding: mockVec })),
+            }),
+          };
+        }),
+      );
+
+      const progress: Array<[number, number]> = [];
+      const { embedBatch } = await import('../../src/core/embeddings/embedder.js');
+      const results = await embedBatch(
+        Array.from({ length: 5 }, (_, i) => `text ${i}`),
+        (completed, total) => progress.push([completed, total]),
+      );
+
+      expect(results).toHaveLength(5);
+      expect(progress).toEqual([
+        [2, 5],
+        [4, 5],
+        [5, 5],
+      ]);
+    });
+
     it('limits concurrent HTTP embedding requests', async () => {
       process.env.GITNEXUS_EMBEDDING_URL = 'http://test:8080/v1';
       process.env.GITNEXUS_EMBEDDING_MODEL = 'test-model';

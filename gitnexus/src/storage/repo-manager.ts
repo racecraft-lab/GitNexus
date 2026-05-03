@@ -632,8 +632,9 @@ export class AnalysisNotFinalizedError extends Error {
  * Throws {@link AnalysisNotFinalizedError} on the first failure with the
  * specific missing artifact. Pure read — does not mutate disk state.
  *
- * Callers must skip this assertion on the `alreadyUpToDate` early-return
- * path, where the rebuild was deliberately not run.
+ * The `alreadyUpToDate` early-return path must re-register the existing meta
+ * before callers run this assertion, so stale registry entries are repaired
+ * without forcing a full rebuild.
  */
 export const assertAnalysisFinalized = async (repoPath: string): Promise<void> => {
   const resolved = path.resolve(repoPath);

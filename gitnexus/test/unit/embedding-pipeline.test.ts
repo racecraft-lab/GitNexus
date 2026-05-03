@@ -282,6 +282,60 @@ describe('runEmbeddingPipeline incremental filter', () => {
     expect(insertParams[0].contentHash).toMatch(/^[0-9a-f]{40}$/);
   });
 
+  it('reports in-flight embedding progress before an outer node batch completes', async () => {
+    vi.doMock('../../src/core/embeddings/embedder.js', () => ({
+      initEmbedder: vi.fn().mockResolvedValue(undefined),
+      embedBatch: vi.fn().mockImplementation(
+        async (
+          texts: string[],
+          onProgress?: (completedTexts: number, totalTexts: number) => void,
+        ) => {
+          for (let i = 1; i <= texts.length; i++) {
+            onProgress?.(i, texts.length);
+          }
+          return texts.map(() => new Float32Array(384));
+        },
+      ),
+      embedText: vi.fn().mockResolvedValue(new Float32Array(384)),
+      embeddingToArray: vi.fn().mockImplementation((emb: Float32Array) => Array.from(emb)),
+      isEmbedderReady: vi.fn().mockReturnValue(true),
+    }));
+    vi.doMock('../../src/core/lbug/lbug-adapter.js', () => ({
+      loadVectorExtension: vi.fn().mockResolvedValue(true),
+    }));
+
+    const nodes = Array.from({ length: 4 }, (_, i) =>
+      makeNode({
+        id: `Function:fn${i}:src/main.ts`,
+        name: `fn${i}`,
+        content: `function fn${i}() { return ${i}; }`,
+      }),
+    );
+    const executeQuery = mockExecuteQuery(nodes);
+    const executeWithReusedStatement = mockExecuteWithReusedStatement();
+
+    const { runEmbeddingPipeline } =
+      await import('../../src/core/embeddings/embedding-pipeline.js');
+
+    await runEmbeddingPipeline(
+      executeQuery,
+      executeWithReusedStatement,
+      onProgress,
+      { batchSize: 4, subBatchSize: 4 },
+      undefined,
+      undefined,
+      new Map(),
+    );
+
+    const embeddingCounts = progressUpdates
+      .filter((p) => p.phase === 'embedding')
+      .map((p) => p.nodesProcessed);
+    expect(embeddingCounts).toContain(1);
+    expect(embeddingCounts).toContain(2);
+    expect(embeddingCounts).toContain(3);
+    expect(embeddingCounts).toContain(4);
+  });
+
   it('maps positional query rows with description/isExported columns correctly', async () => {
     const embedBatchSpy = vi
       .fn()

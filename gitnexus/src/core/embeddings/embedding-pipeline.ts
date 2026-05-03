@@ -396,6 +396,8 @@ export const runEmbeddingPipeline = async (
     // Process in batches of nodes
     for (let batchIndex = 0; batchIndex < totalNodes; batchIndex += batchSize) {
       const batch = nodes.slice(batchIndex, batchIndex + batchSize);
+      const exactBatchNumber = Math.floor(batchIndex / batchSize) + 1;
+      const totalBatches = Math.ceil(totalNodes / batchSize);
 
       // Chunk each node and generate text
       const allTexts: string[] = [];
@@ -474,13 +476,42 @@ export const runEmbeddingPipeline = async (
 
       // Embed chunk texts in sub-batches to control memory
       const EMBED_SUB_BATCH = finalConfig.subBatchSize;
+      let lastReportedNodes = processedNodes;
+      const reportBatchProgress = (embeddedTextCount: number) => {
+        if (allTexts.length === 0 || batch.length === 0) return;
+        const batchFraction = Math.min(1, Math.max(0, embeddedTextCount / allTexts.length));
+        const estimatedNodesInBatch = Math.min(
+          batch.length,
+          Math.floor(batchFraction * batch.length),
+        );
+        const estimatedProcessedNodes = processedNodes + estimatedNodesInBatch;
+        if (
+          estimatedProcessedNodes <= lastReportedNodes ||
+          estimatedProcessedNodes >= processedNodes + batch.length
+        ) {
+          return;
+        }
+        lastReportedNodes = estimatedProcessedNodes;
+        const embeddingProgress = 20 + (estimatedProcessedNodes / totalNodes) * 70;
+        onProgress({
+          phase: 'embedding',
+          percent: Math.round(embeddingProgress),
+          nodesProcessed: estimatedProcessedNodes,
+          totalNodes,
+          currentBatch: exactBatchNumber,
+          totalBatches,
+        });
+      };
+
       for (let si = 0; si < allTexts.length; si += EMBED_SUB_BATCH) {
         const subTexts = allTexts.slice(si, si + EMBED_SUB_BATCH);
         const subUpdates = allUpdates.slice(si, si + EMBED_SUB_BATCH);
 
         let embeddings: Float32Array[];
         try {
-          embeddings = await embedBatch(subTexts);
+          embeddings = await embedBatch(subTexts, (completedTexts) => {
+            reportBatchProgress(si + completedTexts);
+          });
         } catch (embedErr) {
           console.error(
             `❌ embedBatch failed for ${subTexts.length} texts (first: "${subTexts[0]?.substring(0, 80)}..."):`,
@@ -495,6 +526,7 @@ export const runEmbeddingPipeline = async (
         }));
 
         await batchInsertEmbeddings(executeWithReusedStatement, dbUpdates);
+        reportBatchProgress(si + subTexts.length);
       }
 
       processedNodes += batch.length;
@@ -506,8 +538,8 @@ export const runEmbeddingPipeline = async (
         percent: Math.round(embeddingProgress),
         nodesProcessed: processedNodes,
         totalNodes,
-        currentBatch: Math.floor(batchIndex / batchSize) + 1,
-        totalBatches: Math.ceil(totalNodes / batchSize),
+        currentBatch: exactBatchNumber,
+        totalBatches,
       });
     }
 
