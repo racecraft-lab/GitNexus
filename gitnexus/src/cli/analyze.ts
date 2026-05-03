@@ -329,6 +329,7 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
 
   // Track elapsed time per phase
   let lastPhaseLabel = 'Initializing...';
+  let lastPhaseKey = 'initializing';
   let phaseStart = Date.now();
   let lastPlainProgressAt = 0;
   let lastPlainProgressValue = -1;
@@ -346,13 +347,14 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
 
   if (plainProgress) emitPlainProgress(0, 'Initializing...', true);
 
-  const updateBar = (value: number, phaseLabel: string) => {
+  const updateBar = (value: number, phaseLabel: string, phaseKey = phaseLabel) => {
     barCurrentValue = value;
-    const phaseChanged = phaseLabel !== lastPhaseLabel;
+    const phaseChanged = phaseKey !== lastPhaseKey;
     if (phaseChanged) {
-      lastPhaseLabel = phaseLabel;
+      lastPhaseKey = phaseKey;
       phaseStart = Date.now();
     }
+    lastPhaseLabel = phaseLabel;
     const elapsed = Math.round((Date.now() - phaseStart) / 1000);
     const display = elapsed >= 3 ? `${phaseLabel} (${elapsed}s)` : phaseLabel;
     if (plainProgress) {
@@ -402,7 +404,7 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
       },
       {
         onProgress: (_phase, percent, message) => {
-          updateBar(percent, message);
+          updateBar(percent, message, _phase);
         },
         onLog: barLog,
       },
