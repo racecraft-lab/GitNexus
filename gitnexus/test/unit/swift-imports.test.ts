@@ -46,6 +46,23 @@ const capturedSwiftAnnotationNames = (code: string): string[] => {
     );
 };
 
+const capturedSwiftDecoratorNames = (code: string): string[] => {
+  if (!Swift) throw new Error('tree-sitter-swift not available');
+  const parser = new Parser();
+  parser.setLanguage(Swift as Parser.Language);
+  const tree = parser.parse(code);
+  const query = new Parser.Query(Swift as Parser.Language, SWIFT_QUERIES);
+  return query
+    .matches(tree.rootNode)
+    .filter((match) => match.captures.some((capture) => capture.name === 'decorator'))
+    .flatMap((match) =>
+      match.captures
+        .filter((capture) => capture.name === 'decorator.name')
+        .slice(-1)
+        .map((capture) => capture.node.text),
+    );
+};
+
 describe.skipIf(!Swift)('Swift import extraction', () => {
   it('captures the whole qualified import source from tree-sitter queries', () => {
     if (!Swift) throw new Error('tree-sitter-swift not available');
@@ -62,6 +79,26 @@ describe.skipIf(!Swift)('Swift import extraction', () => {
   it('captures Swift attributes as AST annotation definitions', () => {
     expect(
       capturedSwiftAnnotationNames(`
+        @main
+        struct App {
+          @Schemable
+          struct Input {}
+
+          @SwiftUI.State var state: State
+        }
+
+        @testable import Models
+        @_exported import struct Models.User
+
+        @available(macOS 14, *)
+        func run() {}
+      `),
+    ).toEqual(['main', 'Schemable', 'State', 'testable', '_exported', 'available']);
+  });
+
+  it('captures Swift attributes as AST decorator detections', () => {
+    expect(
+      capturedSwiftDecoratorNames(`
         @main
         struct App {
           @Schemable

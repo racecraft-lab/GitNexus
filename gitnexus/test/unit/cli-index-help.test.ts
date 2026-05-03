@@ -15,6 +15,15 @@ function runHelp(command: string) {
 }
 
 describe('CLI help surface', () => {
+  it('analyze help exposes opt-in cluster enrichment flags', () => {
+    const result = runHelp('analyze');
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('--enrich-clusters');
+    expect(result.stdout).toContain('--cluster-enrichment-batch-size <n>');
+    expect(result.stdout).toContain('GITNEXUS_CLUSTER_ENRICHMENT=1');
+  });
+
   it('query help keeps advanced search options without importing analyze deps', () => {
     const result = runHelp('query');
 

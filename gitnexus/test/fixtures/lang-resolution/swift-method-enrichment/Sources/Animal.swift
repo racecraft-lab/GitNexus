@@ -2,8 +2,8 @@ protocol Animal {
     func speak() -> String
 }
 
-class Dog: Animal {
-    func speak() -> String {
+@MainActor class Dog: Animal {
+    @available(macOS 14, *) func speak() -> String {
         return "woof"
     }
 
@@ -14,4 +14,6 @@ class Dog: Animal {
     @objc final func breathe() -> Bool {
         return true
     }
+
+    @SwiftUI.State var state: State
 }

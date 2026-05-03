@@ -1114,6 +1114,10 @@ export const SWIFT_QUERIES = `
 ; Attributes / property wrappers (Swift @Annotations)
 (attribute (user_type (type_identifier) @name .)) @definition.annotation
 
+; Swift attributes are decorator-like metadata too: declaration attributes,
+; property wrappers, and attached macros all use @Attribute syntax.
+(attribute (user_type (type_identifier) @decorator.name .)) @decorator
+
 ; Type aliases
 (typealias_declaration name: (type_identifier) @name) @definition.type
 

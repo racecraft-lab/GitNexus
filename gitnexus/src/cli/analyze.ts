@@ -137,6 +137,8 @@ export interface AnalyzeOptions {
   embeddingBatchSize?: string;
   embeddingSubBatchSize?: string;
   embeddingDevice?: string;
+  enrichClusters?: boolean;
+  clusterEnrichmentBatchSize?: string;
 }
 
 export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOptions) => {
@@ -211,6 +213,17 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
       return;
     }
     process.env.GITNEXUS_EMBEDDING_DEVICE = options.embeddingDevice;
+  }
+
+  let clusterEnrichmentBatchSize: number | undefined;
+  if (options?.clusterEnrichmentBatchSize !== undefined) {
+    const parsed = Number(options.clusterEnrichmentBatchSize);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      console.error('  --cluster-enrichment-batch-size must be a positive integer.\n');
+      process.exitCode = 1;
+      return;
+    }
+    clusterEnrichmentBatchSize = parsed;
   }
 
   console.log('\n  GitNexus Analyzer\n');
@@ -349,6 +362,8 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
         // be able to accept the duplicate name without also paying the
         // cost of a full pipeline re-index. See #829 review round 2.
         allowDuplicateName: options?.allowDuplicateName,
+        clusterEnrichment: options?.enrichClusters,
+        clusterEnrichmentBatchSize,
       },
       {
         onProgress: (_phase, percent, message) => {

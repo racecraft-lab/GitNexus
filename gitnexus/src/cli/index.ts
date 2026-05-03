@@ -59,6 +59,11 @@ program
   .option('--embedding-batch-size <n>', 'Number of nodes per embedding batch')
   .option('--embedding-sub-batch-size <n>', 'Number of chunks per embedding model call')
   .option('--embedding-device <device>', 'Embedding device: auto, cpu, dml, cuda, or wasm')
+  .option(
+    '--enrich-clusters',
+    'Opt in to LLM-generated semantic names and summaries for community clusters',
+  )
+  .option('--cluster-enrichment-batch-size <n>', 'Number of clusters per enrichment LLM call')
   .addHelpText(
     'after',
     '\nEnvironment variables:\n' +
@@ -68,6 +73,10 @@ program
       '  GITNEXUS_WORKER_SUB_BATCH_MAX_BYTES=N  Worker job byte budget. Default 8388608.\n' +
       '  GITNEXUS_EMBEDDING_THREADS=N  Limit local ONNX CPU threads for --embeddings.\n' +
       '  GITNEXUS_SEMANTIC_EXACT_SCAN_LIMIT=N  Max embedding chunks for exact-scan fallback. Default 10000.\n' +
+      '  GITNEXUS_CLUSTER_ENRICHMENT=1  Enable opt-in LLM cluster enrichment.\n' +
+      '  GITNEXUS_CLUSTER_ENRICHMENT_MODEL=...  Override the cluster enrichment LLM model.\n' +
+      '  GITNEXUS_CLUSTER_ENRICHMENT_BASE_URL=...  Override the OpenAI-compatible base URL.\n' +
+      '  GITNEXUS_CLUSTER_ENRICHMENT_API_KEY=...  Override the LLM API key.\n' +
       '\nTip: `.gitnexusignore` supports `.gitignore`-style negation. Add e.g.\n' +
       '     `!__tests__/` to index a directory that is auto-filtered by default (#771).',
   )

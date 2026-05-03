@@ -589,6 +589,13 @@ describe.skipIf(!swiftAvailable)('Swift method enrichment', () => {
     expect(getNodesByLabel(result, 'Class')).toContain('Dog');
   });
 
+  it('captures Swift declaration attributes as class annotations', () => {
+    const classes = getNodesByLabelFull(result, 'Class');
+    const dog = classes.find((n) => n.name === 'Dog');
+    expect(dog).toBeDefined();
+    expect(dog!.properties.annotations).toContain('@MainActor');
+  });
+
   it('emits IMPLEMENTS edge Dog -> Animal', () => {
     const implements_ = getRelationships(result, 'IMPLEMENTS');
     const edge = implements_.find((e) => e.source === 'Dog' && e.target === 'Animal');
@@ -644,6 +651,20 @@ describe.skipIf(!swiftAvailable)('Swift method enrichment', () => {
     const breathe = methods.find((n) => n.name === 'breathe');
     expect(breathe).toBeDefined();
     expect(breathe!.properties.annotations).toContain('@objc');
+  });
+
+  it('captures Swift attributes with arguments as function annotations', () => {
+    const methods = getNodesByLabelFull(result, 'Function');
+    const speak = methods.find((n) => n.name === 'speak' && n.properties.startLine === 5);
+    expect(speak).toBeDefined();
+    expect(speak!.properties.annotations).toContain('@available');
+  });
+
+  it('captures Swift property wrappers as property annotations', () => {
+    const properties = getNodesByLabelFull(result, 'Property');
+    const state = properties.find((n) => n.name === 'state');
+    expect(state).toBeDefined();
+    expect(state!.properties.annotations).toContain('@State');
   });
 
   it('populates parameterTypes for classify(_ name: String)', () => {

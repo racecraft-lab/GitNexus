@@ -38,6 +38,7 @@ import {
   type CommunitiesOutput,
   type ProcessesOutput,
 } from './pipeline-phases/index.js';
+import type { LLMClient } from './cluster-enricher.js';
 
 export interface PipelineOptions {
   /** Skip MRO, community detection, and process extraction for faster test runs. */
@@ -54,6 +55,15 @@ export interface PipelineOptions {
   workerThresholdsForTest?: {
     minFiles?: number;
     minBytes?: number;
+  };
+  /**
+   * Optional LLM enrichment for community clusters. Disabled by default so
+   * analyze remains fully local and deterministic unless explicitly enabled.
+   */
+  clusterEnrichment?: {
+    enabled: boolean;
+    llmClient: LLMClient;
+    batchSize?: number;
   };
 }
 

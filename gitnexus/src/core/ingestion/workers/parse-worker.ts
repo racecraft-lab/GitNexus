@@ -1519,13 +1519,60 @@ const processFileGroup = (
       result.fileScopeBindings.push({ filePath: file.path, bindings: scopeBindings });
     }
 
-    // Per-file map: decorator end-line → decorator info, for associating with definitions
-    const fileDecorators = new Map<number, { name: string; arg?: string; isTool?: boolean }>();
+    // Per-file map: decorator end-line → decorator info, for associating with definitions.
+    // Multiple decorators/attributes can end on the same line, especially Swift
+    // attributes written inline before a declaration.
+    type FileDecorator = { name: string; arg?: string; isTool?: boolean };
+    const fileDecorators = new Map<number, FileDecorator[]>();
+    const addFileDecorator = (line: number, decorator: FileDecorator): void => {
+      const existing = fileDecorators.get(line);
+      if (existing) {
+        existing.push(decorator);
+      } else {
+        fileDecorators.set(line, [decorator]);
+      }
+    };
 
     // Track start indices of definition nodes already processed by higher-priority captures
     // (e.g. @definition.function) to avoid duplicate nodes when @definition.const/@definition.variable
     // patterns overlap with the same source range.
     const processedDefinitionNodes = new Set<number>();
+
+    // Pre-scan decorators/attributes before definition processing. Some grammars
+    // (notably Swift) model attributes as children of the decorated declaration,
+    // so the definition match can arrive before the decorator match.
+    for (const match of matches) {
+      const captureMap: Record<string, SyntaxNode> = {};
+      for (const c of match.captures) {
+        captureMap[c.name] = c.node;
+      }
+
+      if (captureMap['decorator'] && captureMap['decorator.name']) {
+        const decoratorName = captureMap['decorator.name'].text;
+        const decoratorArg = captureMap['decorator.arg']?.text;
+        const decoratorNode = captureMap['decorator'];
+        addFileDecorator(decoratorNode.endPosition.row, {
+          name: decoratorName,
+          arg: decoratorArg,
+          ...(decoratorName === 'tool' ? { isTool: true } : {}),
+        });
+
+        if (ROUTE_DECORATOR_NAMES.has(decoratorName)) {
+          const routePath = decoratorArg || '';
+          const method = decoratorName.replace('Mapping', '').toUpperCase();
+          const httpMethod = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'].includes(method)
+            ? method
+            : 'GET';
+          result.decoratorRoutes.push({
+            filePath: file.path,
+            routePath,
+            httpMethod,
+            decoratorName,
+            lineNumber: decoratorNode.startPosition.row + lineOffset,
+          });
+        }
+      }
+    }
 
     for (const match of matches) {
       const captureMap: Record<string, SyntaxNode> = {};
@@ -1581,38 +1628,7 @@ const processFileGroup = (
 
       // Store decorator metadata for later association with definitions
       if (captureMap['decorator'] && captureMap['decorator.name']) {
-        const decoratorName = captureMap['decorator.name'].text;
-        const decoratorArg = captureMap['decorator.arg']?.text;
-        const decoratorNode = captureMap['decorator'];
-        // Store by the decorator's end line — the definition follows immediately after
-        fileDecorators.set(decoratorNode.endPosition.row, {
-          name: decoratorName,
-          arg: decoratorArg,
-        });
-
-        if (ROUTE_DECORATOR_NAMES.has(decoratorName)) {
-          const routePath = decoratorArg || '';
-          const method = decoratorName.replace('Mapping', '').toUpperCase();
-          const httpMethod = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'].includes(method)
-            ? method
-            : 'GET';
-          result.decoratorRoutes.push({
-            filePath: file.path,
-            routePath,
-            httpMethod,
-            decoratorName,
-            lineNumber: decoratorNode.startPosition.row + lineOffset,
-          });
-        }
-        // MCP/RPC tool detection: @mcp.tool(), @app.tool(), @server.tool()
-        if (decoratorName === 'tool') {
-          // Re-store with isTool flag for the definition handler
-          fileDecorators.set(decoratorNode.endPosition.row, {
-            name: decoratorName,
-            arg: decoratorArg,
-            isTool: true,
-          });
-        }
+        // Already collected in the pre-scan above.
         continue;
       }
 
@@ -2136,37 +2152,48 @@ const processFileGroup = (
 
       // Decorators appear on lines immediately before their definition; allow up to
       // MAX_DECORATOR_SCAN_LINES gap for blank lines / multi-line decorator stacks.
+      // Swift attributes are children of the decorated declaration, so include
+      // the definition start line itself as well.
       const MAX_DECORATOR_SCAN_LINES = 5;
-      if (definitionNode) {
+      const annotationSet = new Set(
+        Array.isArray(methodProps.annotations) ? (methodProps.annotations as string[]) : [],
+      );
+      if (definitionNode && nodeLabel !== 'Annotation') {
         const defStartLine = definitionNode.startPosition.row;
         for (
-          let checkLine = defStartLine - 1;
+          let checkLine = defStartLine;
           checkLine >= Math.max(0, defStartLine - MAX_DECORATOR_SCAN_LINES);
           checkLine--
         ) {
-          const dec = fileDecorators.get(checkLine);
-          if (dec) {
+          const decorators = fileDecorators.get(checkLine);
+          if (decorators) {
             // Use first (closest) decorator found for framework hint
-            if (!frameworkHint) {
-              frameworkHint = {
-                framework: 'decorator',
-                entryPointMultiplier: 1.2,
-                reason: `@${dec.name}${dec.arg ? `("${dec.arg}")` : ''}`,
-              };
-            }
-            // Emit tool definition if this is a @tool decorator
-            if (dec.isTool) {
-              result.toolDefs.push({
-                filePath: file.path,
-                toolName: nodeName,
-                description: (dec.arg || description || '').slice(0, 200),
-                lineNumber: definitionNode.startPosition.row + lineOffset,
-                handlerNodeId: nodeId,
-              });
+            for (const dec of decorators) {
+              annotationSet.add(`@${dec.name}`);
+              if (!frameworkHint) {
+                frameworkHint = {
+                  framework: 'decorator',
+                  entryPointMultiplier: 1.2,
+                  reason: `@${dec.name}${dec.arg ? `("${dec.arg}")` : ''}`,
+                };
+              }
+              // Emit tool definition if this is a @tool decorator
+              if (dec.isTool) {
+                result.toolDefs.push({
+                  filePath: file.path,
+                  toolName: nodeName,
+                  description: (dec.arg || description || '').slice(0, 200),
+                  lineNumber: definitionNode.startPosition.row + lineOffset,
+                  handlerNodeId: nodeId,
+                });
+              }
             }
             fileDecorators.delete(checkLine);
           }
         }
+      }
+      if (annotationSet.size > 0) {
+        methodProps.annotations = [...annotationSet];
       }
 
       // Property metadata extraction (not needed before nodeId — Properties don't overload)

@@ -427,6 +427,31 @@ const processParsingSequential = async (
         })
       : null;
 
+    type FileDecorator = { name: string; arg?: string };
+    const fileDecorators = new Map<number, FileDecorator[]>();
+    const addFileDecorator = (line: number, decorator: FileDecorator): void => {
+      const existing = fileDecorators.get(line);
+      if (existing) {
+        existing.push(decorator);
+      } else {
+        fileDecorators.set(line, [decorator]);
+      }
+    };
+
+    for (const match of matches) {
+      const captureMap: Record<string, SyntaxNode> = {};
+      for (const c of match.captures) {
+        captureMap[c.name] = c.node;
+      }
+
+      if (captureMap['decorator'] && captureMap['decorator.name']) {
+        addFileDecorator(captureMap['decorator'].endPosition.row, {
+          name: captureMap['decorator.name'].text,
+          arg: captureMap['decorator.arg']?.text,
+        });
+      }
+    }
+
     matches.forEach((match) => {
       const captureMap: Record<string, SyntaxNode> = {};
 
@@ -582,9 +607,39 @@ const processParsingSequential = async (
         (classNodeForSymbol && provider.classExtractor?.isTypeDeclaration(classNodeForSymbol)
           ? (provider.classExtractor.extractQualifiedName(classNodeForSymbol, nodeName) ?? nodeName)
           : undefined);
-      const frameworkHint = definitionNode
+      let frameworkHint = definitionNode
         ? detectFrameworkFromAST(language, (definitionNode.text || '').slice(0, 300))
         : null;
+
+      const annotationSet = new Set(
+        Array.isArray(methodProps.annotations) ? (methodProps.annotations as string[]) : [],
+      );
+      if (definitionNodeForRange && nodeLabel !== 'Annotation') {
+        const defStartLine = definitionNodeForRange.startPosition.row;
+        const MAX_DECORATOR_SCAN_LINES = 5;
+        for (
+          let checkLine = defStartLine;
+          checkLine >= Math.max(0, defStartLine - MAX_DECORATOR_SCAN_LINES);
+          checkLine--
+        ) {
+          const decorators = fileDecorators.get(checkLine);
+          if (!decorators) continue;
+          for (const dec of decorators) {
+            annotationSet.add(`@${dec.name}`);
+            if (!frameworkHint) {
+              frameworkHint = {
+                framework: 'decorator',
+                entryPointMultiplier: 1.2,
+                reason: `@${dec.name}${dec.arg ? `("${dec.arg}")` : ''}`,
+              };
+            }
+          }
+          fileDecorators.delete(checkLine);
+        }
+      }
+      if (annotationSet.size > 0) {
+        methodProps.annotations = [...annotationSet];
+      }
 
       const node: GraphNode = {
         id: nodeId,

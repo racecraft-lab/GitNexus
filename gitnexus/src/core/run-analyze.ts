@@ -11,7 +11,7 @@
 
 import path from 'path';
 import fs from 'fs/promises';
-import { runPipelineFromRepo } from './ingestion/pipeline.js';
+import { runPipelineFromRepo, type PipelineOptions } from './ingestion/pipeline.js';
 import {
   initLbug,
   loadGraphToLbug,
@@ -35,6 +35,7 @@ import type { CachedEmbedding } from './embeddings/types.js';
 import { generateAIContextFiles } from '../cli/ai-context.js';
 import { EMBEDDING_TABLE_NAME } from './lbug/schema.js';
 import { STALE_HASH_SENTINEL } from './lbug/schema.js';
+import { callLLM, resolveLLMConfig, type LLMConfig } from './wiki/llm-client.js';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -83,6 +84,12 @@ export interface AnalyzeOptions {
    * of a pipeline re-index.
    */
   allowDuplicateName?: boolean;
+  /** Opt in to LLM-generated semantic names and summaries for community clusters. */
+  clusterEnrichment?: boolean;
+  /** Number of community clusters per LLM request. */
+  clusterEnrichmentBatchSize?: number;
+  /** Optional LLM config overrides for cluster enrichment. */
+  clusterEnrichmentLLM?: Partial<LLMConfig>;
 }
 
 export interface AnalyzeResult {
@@ -103,6 +110,67 @@ export interface AnalyzeResult {
 
 /** Threshold: auto-skip embeddings for repos with more nodes than this */
 const EMBEDDING_NODE_LIMIT = 50_000;
+const CLUSTER_ENRICHMENT_SYSTEM_PROMPT =
+  'You produce concise JSON only. Do not include markdown fences or prose.';
+
+const isTruthyEnv = (value: string | undefined): boolean =>
+  value === '1' || value?.toLowerCase() === 'true' || value?.toLowerCase() === 'yes';
+
+const parsePositiveInt = (value: string | undefined): number | undefined => {
+  if (value === undefined) return undefined;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+};
+
+async function resolveClusterEnrichment(
+  options: AnalyzeOptions,
+  log: (message: string) => void,
+): Promise<PipelineOptions['clusterEnrichment'] | undefined> {
+  const enabled =
+    options.clusterEnrichment === true || isTruthyEnv(process.env.GITNEXUS_CLUSTER_ENRICHMENT);
+  if (!enabled) return undefined;
+
+  const config = await resolveLLMConfig({
+    ...options.clusterEnrichmentLLM,
+    apiKey:
+      options.clusterEnrichmentLLM?.apiKey ||
+      process.env.GITNEXUS_CLUSTER_ENRICHMENT_API_KEY ||
+      undefined,
+    baseUrl:
+      options.clusterEnrichmentLLM?.baseUrl ||
+      process.env.GITNEXUS_CLUSTER_ENRICHMENT_BASE_URL ||
+      undefined,
+    model:
+      options.clusterEnrichmentLLM?.model ||
+      process.env.GITNEXUS_CLUSTER_ENRICHMENT_MODEL ||
+      undefined,
+    maxTokens: options.clusterEnrichmentLLM?.maxTokens ?? 2048,
+    temperature: options.clusterEnrichmentLLM?.temperature ?? 0,
+  });
+
+  if (!config.apiKey) {
+    log(
+      'Warning: cluster enrichment requested but no LLM API key is configured. ' +
+        'Set GITNEXUS_CLUSTER_ENRICHMENT_API_KEY, GITNEXUS_API_KEY, OPENAI_API_KEY, ' +
+        'or run `gitnexus wiki` once to save LLM config. Continuing with heuristic labels.',
+    );
+    return undefined;
+  }
+
+  return {
+    enabled: true,
+    batchSize:
+      options.clusterEnrichmentBatchSize ??
+      parsePositiveInt(process.env.GITNEXUS_CLUSTER_ENRICHMENT_BATCH_SIZE) ??
+      5,
+    llmClient: {
+      generate: async (prompt: string) => {
+        const response = await callLLM(prompt, config, CLUSTER_ENRICHMENT_SYSTEM_PROMPT);
+        return response.content;
+      },
+    },
+  };
+}
 
 // Re-export the pure flag-derivation helper so external callers (and tests)
 // keep importing from this module's stable surface.
@@ -249,12 +317,13 @@ export async function runFullAnalysis(
   }
 
   // ── Phase 1: Full Pipeline (0–60%) ────────────────────────────────
+  const clusterEnrichment = await resolveClusterEnrichment(options, log);
   const pipelineResult = await runPipelineFromRepo(repoPath, (p) => {
     const phaseLabel = PHASE_LABELS[p.phase] || p.phase;
     const scaled = Math.round(p.percent * 0.6);
     const message = p.detail ? `${p.message || phaseLabel} (${p.detail})` : p.message || phaseLabel;
     progress(p.phase, scaled, message);
-  });
+  }, clusterEnrichment ? { clusterEnrichment } : undefined);
 
   // ── Phase 2: LadybugDB (60–85%) ──────────────────────────────────
   progress('lbug', 60, 'Loading into LadybugDB...');

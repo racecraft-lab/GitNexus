@@ -58,8 +58,8 @@ Tasks:
 - [ ] Implement Python decorators for FastAPI, Flask, Click, pytest, and class/function decorators.
 - [ ] Implement JVM annotations for Java and Kotlin, including Spring `@Controller`, `@RestController`, `@GetMapping`, and dependency annotations.
 - [ ] Implement C# attributes for ASP.NET controllers, HTTP verbs, DI, and test attributes.
-- [ ] Implement Swift attributes and property wrappers for `@main`, `@Schemable`, `@Observable`, `@Model`, and app/tool entry-point patterns.
-- [ ] Treat Swift attributes as decorator detections across declaration,
+- [x] Implement Swift attributes and property wrappers for `@main`, `@Schemable`, `@Observable`, `@Model`, and app/tool entry-point patterns.
+- [x] Treat Swift attributes as decorator detections across declaration,
       property-wrapper, macro, and import positions, including `@testable`,
       `@_exported`, and qualified attributes such as `@SwiftUI.State`.
 - [ ] Store decorator detections in graph node properties and expose them through `context`, `query`, `route_map`, and framework summaries.
@@ -76,6 +76,15 @@ Acceptance criteria:
 - Decorator metadata survives analyze, query, context, and MCP responses.
 - Unsupported decorators degrade to generic annotation metadata instead of failing parsing.
 - Tests cover TypeScript, Python, Java, Kotlin, C#, and Swift.
+
+Progress:
+
+- 2026-05-03: Swift attributes now emit `@decorator.name` captures in the
+  Swift tree-sitter query and are associated with decorated class, function,
+  and property graph nodes as `annotations` in both sequential and worker
+  parsing paths. Tests cover `@MainActor`, `@available`, and
+  `@SwiftUI.State`, plus `@main`, `@Schemable`, `@testable`, and
+  `@_exported` query capture.
 
 Validation:
 
@@ -113,6 +122,16 @@ Validation:
 - `cd gitnexus && npx vitest run test/unit/cluster*.test.ts test/unit/wiki*.test.ts`
 - `cd gitnexus && npx tsc --noEmit`
 - Manual smoke: analyze a fixture repo with a mocked OpenAI-compatible endpoint and verify enriched clusters.
+
+Progress:
+
+- 2026-05-03: Analyze now supports opt-in cluster enrichment through
+  `--enrich-clusters` or `GITNEXUS_CLUSTER_ENRICHMENT=1`, using the existing
+  OpenAI-compatible LLM config path plus cluster-specific env overrides.
+  The community phase persists enriched `name`, `keywords`, `description`, and
+  `enrichedBy` properties on Community graph nodes while keeping enrichment
+  disabled by default. Tests cover mocked LLM enrichment, malformed-response
+  fallback in the existing enricher tests, and CLI help surface.
 
 ## Milestone 3: Incremental Indexing
 
