@@ -4384,6 +4384,7 @@ class Foo {
       expect(m.parameters).toHaveLength(2);
       expect(m.parameters[0]).toEqual({
         name: 'name',
+        label: 'name',
         type: 'String',
         rawType: 'String',
         isOptional: false,
@@ -4391,6 +4392,7 @@ class Foo {
       });
       expect(m.parameters[1]).toEqual({
         name: 'age',
+        label: 'age',
         type: 'Int',
         rawType: 'Int',
         isOptional: true,

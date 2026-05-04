@@ -26,10 +26,16 @@ export interface SymbolDefinition {
   /** Per-parameter type names for overload disambiguation (e.g. ['int', 'String']).
    *  Populated when parameter types are resolvable from AST (any typed language). */
   parameterTypes?: string[];
+  /** Per-parameter external labels for languages where call labels disambiguate overloads. */
+  parameterLabels?: string[];
   /** Raw return type text extracted from AST (e.g. 'User', 'Promise<User>') */
   returnType?: string;
   /** Declared type for non-callable symbols — fields/properties (e.g. 'Address', 'List<User>') */
   declaredType?: string;
   /** Links Method/Constructor/Property to owning Class/Struct/Trait nodeId */
   ownerId?: string;
+  /** Language-specific access level, when statically known. */
+  visibility?: string;
+  /** Language-specific declaration introducer, when needed by a resolver hook. */
+  declarationKind?: string;
 }

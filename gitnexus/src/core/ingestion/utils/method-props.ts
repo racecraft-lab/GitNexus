@@ -84,10 +84,17 @@ export function typeTagForId(
     }
   }
 
-  // Build type tag from current method's parameter types.
+  // Build type tag from current method's parameter types and, for languages
+  // such as Swift, external labels. Same-type overloads need the labels to
+  // remain distinct in graph IDs.
   // Prefer rawType (preserves generic/template args like vector<int>) over
   // type (simplified by extractSimpleTypeName which strips generics).
   const types = currentInfo.parameters.map((p) => (p.rawType ?? p.type) as string);
+  const labels = currentInfo.parameters.map((p) => p.label ?? '');
+  const groupUsesLabels = sameArityGroup.some((info) => info.parameters.some((p) => p.label != null));
+  if (groupUsesLabels) {
+    return `~${types.map((type, i) => `${labels[i] ?? ''}:${type}`).join(',')}`;
+  }
   return `~${types.join(',')}`;
 }
 
@@ -142,10 +149,12 @@ export function constTagForId(
 /** Convert MethodInfo from methodExtractor into flat properties for a graph node. */
 export function buildMethodProps(info: MethodInfo): Record<string, unknown> {
   const types: string[] = [];
+  const labels: string[] = [];
   let optionalCount = 0;
   let hasVariadic = false;
   for (const p of info.parameters) {
     if (p.type !== null) types.push(p.type);
+    if (p.label != null) labels.push(p.label);
     if (p.isOptional) optionalCount++;
     if (p.isVariadic) hasVariadic = true;
   }
@@ -155,6 +164,7 @@ export function buildMethodProps(info: MethodInfo): Record<string, unknown> {
       ? { requiredParameterCount: info.parameters.length - optionalCount }
       : {}),
     ...(types.length > 0 ? { parameterTypes: types } : {}),
+    ...(labels.length > 0 ? { parameterLabels: labels } : {}),
     returnType: info.returnType ?? undefined,
     visibility: info.visibility,
     isStatic: info.isStatic,

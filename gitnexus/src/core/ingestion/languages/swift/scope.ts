@@ -18,7 +18,11 @@ import { getLanguageGrammar } from '../../../tree-sitter/parser-loader.js';
 import { getTreeSitterBufferSize } from '../../constants.js';
 import { nodeToCapture, syntheticCapture, type SyntaxNode } from '../../utils/ast-helpers.js';
 import type { ScopeResolutionIndexes } from '../../model/scope-resolution-indexes.js';
-import { loadSwiftPackageConfig, type SwiftPackageConfig } from '../../language-config.js';
+import {
+  loadSwiftPackageConfig,
+  parseSwiftPackageManifest,
+  type SwiftPackageConfig,
+} from '../../language-config.js';
 
 let swiftParser: Parser | null = null;
 
@@ -84,10 +88,17 @@ function emitStructuralCaptures(node: SyntaxNode, out: CaptureMatch[]): void {
           : kind === 'enum'
             ? '@declaration.enum'
             : '@declaration.class';
-      out.push({
+      const match: Record<string, Capture> = {
         [tag]: nodeToCapture(tag, node),
         '@declaration.name': nodeToCapture('@declaration.name', name),
-      });
+        '@declaration.visibility': syntheticCapture(
+          '@declaration.visibility',
+          node,
+          swiftVisibilityForDeclaration(node),
+        ),
+        '@declaration.kind': syntheticCapture('@declaration.kind', node, kind),
+      };
+      out.push(match);
       return;
     }
     case 'protocol_declaration': {
@@ -97,6 +108,12 @@ function emitStructuralCaptures(node: SyntaxNode, out: CaptureMatch[]): void {
         out.push({
           '@declaration.interface': nodeToCapture('@declaration.interface', node),
           '@declaration.name': nodeToCapture('@declaration.name', name),
+          '@declaration.visibility': syntheticCapture(
+            '@declaration.visibility',
+            node,
+            swiftVisibilityForDeclaration(node),
+          ),
+          '@declaration.kind': syntheticCapture('@declaration.kind', node, 'protocol'),
         });
       }
       return;
@@ -108,6 +125,12 @@ function emitStructuralCaptures(node: SyntaxNode, out: CaptureMatch[]): void {
         const match: Record<string, Capture> = {
           '@declaration.function': nodeToCapture('@declaration.function', node),
           '@declaration.name': nodeToCapture('@declaration.name', name),
+          '@declaration.visibility': syntheticCapture(
+            '@declaration.visibility',
+            node,
+            swiftVisibilityForDeclaration(node),
+          ),
+          '@declaration.kind': syntheticCapture('@declaration.kind', node, 'function'),
         };
         addArityMetadata(match, node);
         out.push(match);
@@ -121,10 +144,32 @@ function emitStructuralCaptures(node: SyntaxNode, out: CaptureMatch[]): void {
         const match: Record<string, Capture> = {
           '@declaration.method': nodeToCapture('@declaration.method', node),
           '@declaration.name': nodeToCapture('@declaration.name', name),
+          '@declaration.visibility': syntheticCapture(
+            '@declaration.visibility',
+            node,
+            swiftVisibilityForDeclaration(node),
+          ),
+          '@declaration.kind': syntheticCapture('@declaration.kind', node, 'protocol_function'),
         };
         addArityMetadata(match, node);
         out.push(match);
       }
+      return;
+    }
+    case 'subscript_declaration': {
+      out.push({ '@scope.function': nodeToCapture('@scope.function', node) });
+      const match: Record<string, Capture> = {
+        '@declaration.method': nodeToCapture('@declaration.method', node),
+        '@declaration.name': syntheticCapture('@declaration.name', node, 'subscript'),
+        '@declaration.visibility': syntheticCapture(
+          '@declaration.visibility',
+          node,
+          swiftVisibilityForDeclaration(node),
+        ),
+        '@declaration.kind': syntheticCapture('@declaration.kind', node, 'subscript'),
+      };
+      addArityMetadata(match, node);
+      out.push(match);
       return;
     }
     case 'init_declaration':
@@ -138,6 +183,28 @@ function emitStructuralCaptures(node: SyntaxNode, out: CaptureMatch[]): void {
         out.push({
           '@declaration.typealias': nodeToCapture('@declaration.typealias', node),
           '@declaration.name': nodeToCapture('@declaration.name', name),
+          '@declaration.visibility': syntheticCapture(
+            '@declaration.visibility',
+            node,
+            swiftVisibilityForDeclaration(node),
+          ),
+          '@declaration.kind': syntheticCapture('@declaration.kind', node, 'typealias'),
+        });
+      }
+      return;
+    }
+    case 'associatedtype_declaration': {
+      const name = typeLikeNameNode(node);
+      if (name !== null) {
+        out.push({
+          '@declaration.typealias': nodeToCapture('@declaration.typealias', node),
+          '@declaration.name': nodeToCapture('@declaration.name', name),
+          '@declaration.visibility': syntheticCapture(
+            '@declaration.visibility',
+            node,
+            swiftVisibilityForDeclaration(node),
+          ),
+          '@declaration.kind': syntheticCapture('@declaration.kind', node, 'associatedtype'),
         });
       }
       return;
@@ -149,6 +216,12 @@ function emitStructuralCaptures(node: SyntaxNode, out: CaptureMatch[]): void {
         out.push({
           '@declaration.property': nodeToCapture('@declaration.property', node),
           '@declaration.name': nodeToCapture('@declaration.name', name),
+          '@declaration.visibility': syntheticCapture(
+            '@declaration.visibility',
+            node,
+            swiftVisibilityForDeclaration(node),
+          ),
+          '@declaration.kind': syntheticCapture('@declaration.kind', node, 'property'),
         });
       }
       return;
@@ -191,6 +264,16 @@ function emitTypeBindingCaptures(node: SyntaxNode, out: CaptureMatch[]): void {
     const returnType = returnTypeText(node);
     if (fnName !== null && returnType !== null) {
       out.push(typeBindingMatch(node, '@type-binding.return', fnName.text, returnType));
+    }
+  }
+
+  if (node.type === 'subscript_declaration') {
+    for (const param of directChildren(node, 'parameter')) {
+      const name = parameterLocalName(param);
+      const type = parameterTypeText(param);
+      if (name !== null && type !== null) {
+        out.push(typeBindingMatch(param, '@type-binding.parameter', name, type));
+      }
     }
   }
 
@@ -248,6 +331,10 @@ function emitTypeBindingCaptures(node: SyntaxNode, out: CaptureMatch[]): void {
       out.push(typeBindingMatch(node, '@type-binding.alias', bound.text, collection.text));
     }
   }
+
+  if (node.type === 'call_expression') {
+    for (const binding of closureElementBindings(node)) out.push(binding);
+  }
 }
 
 function emitReferenceCaptures(node: SyntaxNode, out: CaptureMatch[]): void {
@@ -256,6 +343,7 @@ function emitReferenceCaptures(node: SyntaxNode, out: CaptureMatch[]): void {
     if (callee === null) return;
     const arity = countCallArguments(node);
     const argumentTypes = inferCallArgumentTypes(node);
+    const argumentLabels = inferCallArgumentLabels(node);
 
     if (callee.type === 'simple_identifier') {
       const tag = startsWithUppercase(callee.text)
@@ -267,6 +355,7 @@ function emitReferenceCaptures(node: SyntaxNode, out: CaptureMatch[]): void {
         '@reference.arity': syntheticCapture('@reference.arity', node, String(arity)),
       };
       addArgumentTypes(match, node, argumentTypes);
+      addArgumentLabels(match, node, argumentLabels);
       out.push(match);
       return;
     }
@@ -285,6 +374,7 @@ function emitReferenceCaptures(node: SyntaxNode, out: CaptureMatch[]): void {
         '@reference.arity': syntheticCapture('@reference.arity', node, String(arity)),
       };
       addArgumentTypes(match, node, argumentTypes);
+      addArgumentLabels(match, node, argumentLabels);
       out.push(match);
     }
     return;
@@ -491,16 +581,28 @@ export function resolveSwiftImportTargetForProvider(
 export function populateSwiftModuleSiblings(
   parsedFiles: readonly ParsedFile[],
   indexes: ScopeResolutionIndexes,
+  ctx?: {
+    readonly fileContents: ReadonlyMap<string, string>;
+    readonly resolutionConfig?: unknown;
+  },
 ): void {
-  const groups = groupSwiftFilesByModule(parsedFiles.map((p) => p.filePath));
+  const swiftPackageConfig = swiftPackageConfigFromContext(ctx);
+  const groups = groupSwiftFilesByModule(
+    parsedFiles.map((p) => p.filePath),
+    swiftPackageConfig,
+  );
   const parsedByPath = new Map(parsedFiles.map((p) => [p.filePath, p]));
   const augmentations = indexes.bindingAugmentations as Map<ScopeId, Map<string, BindingRef[]>>;
   const importMap = indexes.imports as Map<ScopeId, ImportEdge[]>;
+  const groupByFile = new Map<string, string>();
+  for (const [groupName, files] of groups) {
+    for (const file of files) groupByFile.set(file, groupName);
+  }
 
+  const visibleRefsByFile = new Map<string, BindingRef[]>();
   for (const group of groups.values()) {
     if (group.length <= 1) continue;
 
-    const exportsByFile = new Map<string, BindingRef[]>();
     for (const filePath of group) {
       const parsed = parsedByPath.get(filePath);
       const moduleScope = parsed?.scopes.find((s) => s.id === parsed.moduleScope);
@@ -510,16 +612,12 @@ export function populateSwiftModuleSiblings(
       for (const [, bindings] of moduleScope.bindings) {
         for (const ref of bindings) {
           if (ref.origin !== 'local') continue;
-          if (!isSwiftModuleVisibleDef(ref.def)) continue;
+          if (!isSwiftSameModuleVisibleDef(ref.def)) continue;
           refs.push(ref);
         }
       }
-      refs.sort(
-        (a, b) =>
-          a.def.filePath.length - b.def.filePath.length ||
-          a.def.filePath.localeCompare(b.def.filePath),
-      );
-      exportsByFile.set(filePath, refs);
+      sortBindingRefs(refs);
+      visibleRefsByFile.set(filePath, refs);
     }
 
     for (const sourceFile of group) {
@@ -531,19 +629,23 @@ export function populateSwiftModuleSiblings(
         if (target === undefined) continue;
         addImplicitImportEdge(importMap, source.moduleScope, target);
 
-        const refs = exportsByFile.get(targetFile) ?? [];
-        for (const ref of refs) {
-          const name = simpleDefName(ref.def);
-          if (name === null) continue;
-          const bucket = getAugmentationBucket(augmentations, source.moduleScope, name);
-          if (bucket.some((b) => b.def.nodeId === ref.def.nodeId)) continue;
-          bucket.push({ def: ref.def, origin: 'import' });
-          bucket.sort(
-            (a, b) =>
-              a.def.filePath.length - b.def.filePath.length ||
-              a.def.filePath.localeCompare(b.def.filePath),
-          );
-        }
+        addVisibleRefsToScope(augmentations, source.moduleScope, visibleRefsByFile.get(targetFile) ?? []);
+      }
+    }
+  }
+
+  for (const source of parsedFiles) {
+    const imports = importMap.get(source.moduleScope) ?? [];
+    for (const edge of imports) {
+      if (edge.kind !== 'namespace' || edge.targetFile === null) continue;
+      const targetGroupName = groupByFile.get(edge.targetFile);
+      if (targetGroupName === undefined) continue;
+      const targetGroup = groups.get(targetGroupName) ?? [];
+      const testable = isTestableImport(source, edge.localName, ctx?.fileContents);
+      for (const targetFile of targetGroup) {
+        if (targetFile === source.filePath) continue;
+        const refs = visibleImportRefsForFile(parsedByPath.get(targetFile), testable);
+        addVisibleRefsToScope(augmentations, source.moduleScope, refs);
       }
     }
   }
@@ -619,16 +721,57 @@ function typeBindingMatch(
   };
 }
 
+function closureElementBindings(callNode: SyntaxNode): CaptureMatch[] {
+  const callee = firstCallCallee(callNode);
+  if (callee?.type !== 'navigation_expression') return [];
+  const nav = navigationParts(callee);
+  if (nav === null || !COLLECTION_CLOSURE_METHODS.has(nav.member)) return [];
+  const suffix = firstDirectChild(callNode, 'call_suffix');
+  if (suffix === null) return [];
+  const closures = directChildren(suffix, 'lambda_literal');
+  if (closures.length === 0) return [];
+
+  const out: CaptureMatch[] = [];
+  for (const closure of closures) {
+    const params = firstDescendant(closure, new Set(['lambda_function_type_parameters']));
+    const explicitParams = params === null ? [] : directChildren(params, 'lambda_parameter');
+    for (const param of explicitParams) {
+      const name = firstDescendant(param, new Set(['simple_identifier']));
+      if (name !== null) {
+        out.push(typeBindingMatch(param, '@type-binding.alias', name.text, nav.receiverText));
+      }
+    }
+    if (explicitParams.length === 0 && closure.text.includes('$0')) {
+      out.push(typeBindingMatch(closure, '@type-binding.alias', '$0', nav.receiverText));
+    }
+  }
+  return out;
+}
+
+const COLLECTION_CLOSURE_METHODS: ReadonlySet<string> = new Set([
+  'forEach',
+  'map',
+  'compactMap',
+  'flatMap',
+  'filter',
+  'reduce',
+  'sorted',
+  'contains',
+  'first',
+]);
+
 function addArityMetadata(match: Record<string, Capture>, fnNode: SyntaxNode): void {
   const params = directChildren(fnNode, 'parameter');
   let optional = 0;
   let variadic = false;
   const types: string[] = [];
+  const labels: string[] = [];
   for (const param of params) {
     if (/\.\.\./.test(param.text)) variadic = true;
     if (hasDefaultValue(param)) optional++;
     const type = parameterTypeText(param);
     if (type !== null) types.push(normalizeTypeName(type));
+    labels.push(parameterExternalLabel(param));
   }
   if (variadic) types.push('...');
   if (!variadic) {
@@ -650,6 +793,13 @@ function addArityMetadata(match: Record<string, Capture>, fnNode: SyntaxNode): v
       JSON.stringify(types),
     );
   }
+  if (labels.length > 0) {
+    match['@declaration.parameter-labels'] = syntheticCapture(
+      '@declaration.parameter-labels',
+      fnNode,
+      JSON.stringify(labels),
+    );
+  }
 }
 
 function addArgumentTypes(
@@ -662,6 +812,19 @@ function addArgumentTypes(
     '@reference.parameter-types',
     node,
     JSON.stringify(types),
+  );
+}
+
+function addArgumentLabels(
+  match: Record<string, Capture>,
+  node: SyntaxNode,
+  labels: readonly string[],
+): void {
+  if (labels.length === 0) return;
+  match['@reference.argument-labels'] = syntheticCapture(
+    '@reference.argument-labels',
+    node,
+    JSON.stringify(labels),
   );
 }
 
@@ -726,14 +889,22 @@ function firstCallCallee(node: SyntaxNode): SyntaxNode | null {
 
 function countCallArguments(callNode: SyntaxNode): number {
   const args = firstDescendant(callNode, new Set(['value_arguments']));
-  if (args === null) return 0;
-  return directChildren(args, 'value_argument').length;
+  const valueCount = args === null ? 0 : directChildren(args, 'value_argument').length;
+  return valueCount + trailingClosureCount(callNode);
 }
 
 function inferCallArgumentTypes(callNode: SyntaxNode): readonly string[] {
   const args = firstDescendant(callNode, new Set(['value_arguments']));
-  if (args === null) return [];
-  return directChildren(args, 'value_argument').map(inferArgumentType);
+  const types = args === null ? [] : directChildren(args, 'value_argument').map(inferArgumentType);
+  for (let i = 0; i < trailingClosureCount(callNode); i++) types.push('() -> Void');
+  return types;
+}
+
+function inferCallArgumentLabels(callNode: SyntaxNode): readonly string[] {
+  const args = firstDescendant(callNode, new Set(['value_arguments']));
+  const labels = args === null ? [] : directChildren(args, 'value_argument').map(argumentLabel);
+  for (let i = 0; i < trailingClosureCount(callNode); i++) labels.push('');
+  return labels;
 }
 
 function inferArgumentType(argNode: SyntaxNode): string {
@@ -758,6 +929,12 @@ function inferArgumentType(argNode: SyntaxNode): string {
   }
 }
 
+function argumentLabel(argNode: SyntaxNode): string {
+  const label = firstDirectChild(argNode, 'value_argument_label');
+  const name = firstDescendant(label, new Set(['simple_identifier']));
+  return name?.text ?? '';
+}
+
 function propertyAnnotationType(node: SyntaxNode): string | null {
   const ann = firstDirectChild(node, 'type_annotation');
   if (ann === null) return null;
@@ -778,6 +955,18 @@ function parameterLocalName(node: SyntaxNode): string | null {
   const names = directChildren(node, 'simple_identifier').map((n) => n.text);
   const candidates = names.filter((n) => n !== '_');
   return candidates[candidates.length - 1] ?? null;
+}
+
+function parameterExternalLabel(node: SyntaxNode): string {
+  const names = directChildren(node, 'simple_identifier').map((n) => n.text);
+  if (names.length === 0) return '';
+  return names[0] === '_' ? '' : names[0]!;
+}
+
+function trailingClosureCount(callNode: SyntaxNode): number {
+  const suffix = firstDirectChild(callNode, 'call_suffix');
+  if (suffix === null) return 0;
+  return directChildren(suffix, 'lambda_literal').length;
 }
 
 function returnTypeText(node: SyntaxNode): string | null {
@@ -804,13 +993,44 @@ function propertyNameNode(node: SyntaxNode): SyntaxNode | null {
 
 function typeLikeNameNode(node: SyntaxNode): SyntaxNode | null {
   const name = node.childForFieldName('name');
-  if (name === null) return null;
+  if (name === null) return firstDescendant(node, new Set(['type_identifier', 'simple_identifier']));
   if (name.type === 'type_identifier') return name;
   return firstDescendant(name, new Set(['type_identifier', 'simple_identifier']));
 }
 
 function declarationKind(node: SyntaxNode): string {
   return node.childForFieldName('declaration_kind')?.text ?? 'class';
+}
+
+function swiftVisibilityForDeclaration(node: SyntaxNode): string {
+  const explicit = explicitSwiftVisibility(node);
+  if (explicit !== null) return explicit;
+
+  const owner = enclosingSwiftType(node);
+  if (owner !== null && owner !== node) {
+    const ownerVisibility = explicitSwiftVisibility(owner);
+    if (ownerVisibility === 'private' || ownerVisibility === 'fileprivate') return ownerVisibility;
+    if (owner.type === 'protocol_declaration' && ownerVisibility === 'public') return 'public';
+  }
+  return 'internal';
+}
+
+function explicitSwiftVisibility(node: SyntaxNode): string | null {
+  const modifiers = firstDirectChild(node, 'modifiers');
+  if (modifiers === null) return null;
+  for (const part of modifiers.text.split(/\s+/)) {
+    if (
+      part === 'open' ||
+      part === 'public' ||
+      part === 'package' ||
+      part === 'internal' ||
+      part === 'fileprivate' ||
+      part === 'private'
+    ) {
+      return part;
+    }
+  }
+  return null;
 }
 
 function swiftImportIdentifierParts(importNode: SyntaxNode): string[] {
@@ -920,15 +1140,59 @@ function firstDescendant(
 function normalizeTypeName(text: string): string {
   let out = text.trim();
   while (out.endsWith('?') || out.endsWith('!')) out = out.slice(0, -1).trim();
-  const array = out.match(/^\[([^:\]]+)\]$/);
-  if (array !== null) out = array[1]!.trim();
-  const dictionary = out.match(/^\[[^:\]]+:\s*([^\]]+)\]$/);
-  if (dictionary !== null) out = dictionary[1]!.trim();
-  const generic = out.match(/^(?:Array|Optional|Set|Sequence|AnySequence|Result)<([^,<>]+)>$/);
-  if (generic !== null) out = generic[1]!.trim();
+  const sugar = unwrapSwiftCollectionSugar(out);
+  if (sugar !== null) out = sugar;
+  const generic = unwrapSwiftGeneric(out);
+  if (generic !== null) out = generic;
   const dot = out.lastIndexOf('.');
   if (dot !== -1) out = out.slice(dot + 1);
-  return out;
+  return out.trim();
+}
+
+function unwrapSwiftCollectionSugar(text: string): string | null {
+  if (!text.startsWith('[') || !text.endsWith(']')) return null;
+  const inner = text.slice(1, -1);
+  const colon = findTopLevelSeparator(inner, ':');
+  return normalizeTypeName(colon === -1 ? inner : inner.slice(colon + 1));
+}
+
+function unwrapSwiftGeneric(text: string): string | null {
+  const open = text.indexOf('<');
+  if (open === -1 || !text.endsWith('>')) return null;
+  const base = text.slice(0, open).trim().split('.').pop() ?? '';
+  if (!GENERIC_ELEMENT_WRAPPERS.has(base)) return null;
+  const inner = text.slice(open + 1, -1);
+  const comma = findTopLevelSeparator(inner, ',');
+  const selected = base === 'Dictionary' ? (comma === -1 ? inner : inner.slice(comma + 1)) : inner;
+  const success = base === 'Result' && comma !== -1 ? inner.slice(0, comma) : selected;
+  return normalizeTypeName(success);
+}
+
+const GENERIC_ELEMENT_WRAPPERS: ReadonlySet<string> = new Set([
+  'Array',
+  'Optional',
+  'Set',
+  'Sequence',
+  'AnySequence',
+  'Result',
+  'Dictionary',
+]);
+
+function findTopLevelSeparator(text: string, separator: string): number {
+  let angle = 0;
+  let square = 0;
+  let paren = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (ch === '<') angle++;
+    else if (ch === '>') angle = Math.max(0, angle - 1);
+    else if (ch === '[') square++;
+    else if (ch === ']') square = Math.max(0, square - 1);
+    else if (ch === '(') paren++;
+    else if (ch === ')') paren = Math.max(0, paren - 1);
+    else if (ch === separator && angle === 0 && square === 0 && paren === 0) return i;
+  }
+  return -1;
 }
 
 function startsWithUppercase(text: string): boolean {
@@ -958,11 +1222,18 @@ function basenameWithoutExtension(filePath: string): string {
   return normalized.slice(slash + 1).replace(/\.swift$/i, '');
 }
 
-function groupSwiftFilesByModule(filePaths: readonly string[]): Map<string, string[]> {
+function groupSwiftFilesByModule(
+  filePaths: readonly string[],
+  swiftPackageConfig: SwiftPackageConfig | null,
+): Map<string, string[]> {
+  if (swiftPackageConfig !== null && swiftPackageConfig.targets.size > 0) {
+    return groupSwiftFilesByPackageTarget(filePaths, swiftPackageConfig);
+  }
+
   const out = new Map<string, string[]>();
   for (const filePath of filePaths) {
     const normalized = normalizePath(filePath);
-    const match = normalized.match(/(?:^|\/)Sources\/([^/]+)\//);
+    const match = normalized.match(/(?:^|\/)(?:Sources|Source|src|srcs|Tests)\/([^/]+)\//);
     const key = match?.[1] ?? '__default__';
     const group = out.get(key) ?? [];
     group.push(filePath);
@@ -971,7 +1242,67 @@ function groupSwiftFilesByModule(filePaths: readonly string[]): Map<string, stri
   return out;
 }
 
-function isSwiftModuleVisibleDef(def: SymbolDefinition): boolean {
+function groupSwiftFilesByPackageTarget(
+  filePaths: readonly string[],
+  swiftPackageConfig: SwiftPackageConfig,
+): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  const targets = [...swiftPackageConfig.targets.entries()].map(([name, targetPath]) => ({
+    name,
+    prefix: normalizePath(targetPath).replace(/\/+$/, '') + '/',
+  }));
+  const defaultGroup: string[] = [];
+  for (const filePath of filePaths) {
+    const normalized = normalizePath(filePath);
+    const target = targets.find((entry) => normalized.startsWith(entry.prefix));
+    const key = target?.name;
+    if (key === undefined) {
+      defaultGroup.push(filePath);
+      continue;
+    }
+    const group = out.get(key) ?? [];
+    group.push(filePath);
+    out.set(key, group);
+  }
+  if (defaultGroup.length > 0) out.set('__default__', defaultGroup);
+  return out;
+}
+
+function swiftPackageConfigFromContext(
+  ctx:
+    | {
+        readonly fileContents: ReadonlyMap<string, string>;
+        readonly resolutionConfig?: unknown;
+      }
+    | undefined,
+): SwiftPackageConfig | null {
+  const cfg = ctx?.resolutionConfig as SwiftResolutionConfig | undefined;
+  if (cfg?.swiftPackageConfig !== undefined && cfg.swiftPackageConfig !== null) {
+    return cfg.swiftPackageConfig;
+  }
+  if (ctx === undefined) return null;
+  for (const [filePath, content] of ctx.fileContents) {
+    if (normalizePath(filePath).endsWith('Package.swift')) {
+      const parsed = parseSwiftPackageManifest(content);
+      return parsed.targets.size > 0 ? parsed : null;
+    }
+  }
+  return null;
+}
+
+function isSwiftSameModuleVisibleDef(def: SymbolDefinition): boolean {
+  if (!isSwiftVisibleDefType(def)) return false;
+  return def.visibility !== 'private' && def.visibility !== 'fileprivate';
+}
+
+function isSwiftImportVisibleDef(def: SymbolDefinition, testable: boolean): boolean {
+  if (!isSwiftVisibleDefType(def)) return false;
+  const visibility = def.visibility ?? 'internal';
+  if (visibility === 'open' || visibility === 'public' || visibility === 'package') return true;
+  return testable && visibility === 'internal';
+}
+
+function isSwiftVisibleDefType(def: SymbolDefinition): boolean {
   return (
     def.type === 'Class' ||
     def.type === 'Struct' ||
@@ -979,6 +1310,55 @@ function isSwiftModuleVisibleDef(def: SymbolDefinition): boolean {
     def.type === 'Interface' ||
     def.type === 'Function' ||
     def.type === 'TypeAlias'
+  );
+}
+
+function visibleImportRefsForFile(parsed: ParsedFile | undefined, testable: boolean): BindingRef[] {
+  if (parsed === undefined) return [];
+  const moduleScope = parsed.scopes.find((s) => s.id === parsed.moduleScope);
+  if (moduleScope === undefined) return [];
+  const refs: BindingRef[] = [];
+  for (const [, bindings] of moduleScope.bindings) {
+    for (const ref of bindings) {
+      if (ref.origin !== 'local') continue;
+      if (!isSwiftImportVisibleDef(ref.def, testable)) continue;
+      refs.push(ref);
+    }
+  }
+  sortBindingRefs(refs);
+  return refs;
+}
+
+function addVisibleRefsToScope(
+  augmentations: Map<ScopeId, Map<string, BindingRef[]>>,
+  scopeId: ScopeId,
+  refs: readonly BindingRef[],
+): void {
+  for (const ref of refs) {
+    const name = simpleDefName(ref.def);
+    if (name === null) continue;
+    const bucket = getAugmentationBucket(augmentations, scopeId, name);
+    if (bucket.some((b) => b.def.nodeId === ref.def.nodeId)) continue;
+    bucket.push({ def: ref.def, origin: 'import' });
+    sortBindingRefs(bucket);
+  }
+}
+
+function isTestableImport(
+  source: ParsedFile,
+  moduleName: string,
+  fileContents: ReadonlyMap<string, string> | undefined,
+): boolean {
+  const content = fileContents?.get(source.filePath);
+  if (content === undefined) return false;
+  const escaped = moduleName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`@testable\\s+import\\s+${escaped}\\b`).test(content);
+}
+
+function sortBindingRefs(refs: BindingRef[]): void {
+  refs.sort(
+    (a, b) =>
+      a.def.filePath.length - b.def.filePath.length || a.def.filePath.localeCompare(b.def.filePath),
   );
 }
 

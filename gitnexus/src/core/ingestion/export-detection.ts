@@ -221,10 +221,10 @@ export const phpExportChecker: ExportChecker = (node, _name) => {
 /**
  * Swift: treat symbols as exported unless explicitly marked private/fileprivate.
  *
- * Swift's default access level is `internal`, which means visible to all files
- * in the same module/target. Since GitNexus indexes at the target level,
- * `internal` symbols should be treated as exported (cross-file visible).
- * Only `private` and `fileprivate` symbols are truly file-scoped.
+ * Swift's default access level is `internal`, which means visible to files in
+ * the same module. This low-level parser check only decides whether a symbol is
+ * visible outside its file; registry-primary Swift resolution applies
+ * module/import/@testable visibility filters before cross-target use.
  */
 export const swiftExportChecker: ExportChecker = (node, _name) => {
   let current: SyntaxNode | null = node;
@@ -237,7 +237,7 @@ export const swiftExportChecker: ExportChecker = (node, _name) => {
     }
     current = current.parent;
   }
-  // Default (internal), public, and open are all cross-file visible
+  // Default (internal), public, and open are all candidates for cross-file visibility.
   return true;
 };
 

@@ -20,7 +20,12 @@
 import type { NodeLabel, ScopeId, SymbolDefinition } from 'gitnexus-shared';
 import type { ScopeResolutionIndexes } from '../../model/scope-resolution-indexes.js';
 import { generateId } from '../../../../lib/utils.js';
-import { qualifiedKey, simpleKey, type GraphNodeLookup } from '../graph-bridge/node-lookup.js';
+import {
+  parameterDiscriminator,
+  qualifiedKey,
+  simpleKey,
+  type GraphNodeLookup,
+} from '../graph-bridge/node-lookup.js';
 
 /**
  * Labels that may legitimately ANCHOR a CALLS/ACCESSES edge as the
@@ -72,7 +77,12 @@ function isCallerAnchorLabel(label: NodeLabel): boolean {
  */
 export function resolveDefGraphId(
   filePath: string,
-  def: { qualifiedName?: string; type?: NodeLabel; parameterTypes?: readonly string[] },
+  def: {
+    qualifiedName?: string;
+    type?: NodeLabel;
+    parameterTypes?: readonly string[];
+    parameterLabels?: readonly string[];
+  },
   nodeLookup: GraphNodeLookup,
 ): string | undefined {
   const qn = def.qualifiedName;
@@ -82,11 +92,15 @@ export function resolveDefGraphId(
     // try the parameter-typed key first so same-name same-arity
     // overloads route to their distinct graph nodes.
     if (
-      def.type === 'Method' &&
+      (def.type === 'Method' || def.type === 'Function') &&
       def.parameterTypes !== undefined &&
       def.parameterTypes.length > 0
     ) {
-      const pKey = qualifiedKey(filePath, def.type, `${qn}~${def.parameterTypes.join(',')}`);
+      const pKey = qualifiedKey(
+        filePath,
+        def.type,
+        `${qn}~${parameterDiscriminator(def.parameterTypes, def.parameterLabels)}`,
+      );
       const pHit = nodeLookup.get(pKey);
       if (pHit !== undefined) return pHit;
     }

@@ -79,4 +79,9 @@ export interface ReferenceSite {
    * (C#: `42` → `'int'`, `"alice"` → `'string'`).
    */
   readonly argumentTypes?: readonly string[];
+  /**
+   * Argument labels at the call site. Empty string means no written label
+   * (for example `_` parameters or first/trailing-closure arguments).
+   */
+  readonly argumentLabels?: readonly string[];
 }

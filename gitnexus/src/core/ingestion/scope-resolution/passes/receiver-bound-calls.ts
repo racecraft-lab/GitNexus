@@ -475,6 +475,11 @@ function pickOverload(
   }
   if (overloads.length === 1) return overloads[0];
 
-  const candidates = narrowOverloadCandidates(overloads, site.arity, site.argumentTypes);
+  const candidates = narrowOverloadCandidates(
+    overloads,
+    site.arity,
+    site.argumentTypes,
+    site.argumentLabels,
+  );
   return candidates[0] ?? overloads[0];
 }

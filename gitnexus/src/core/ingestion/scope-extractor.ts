@@ -541,6 +541,9 @@ function buildDefFromDeclarationMatch(
   const parameterCount = parseIntCapture(match['@declaration.parameter-count']);
   const requiredParameterCount = parseIntCapture(match['@declaration.required-parameter-count']);
   const parameterTypes = parseJsonStringArrayCapture(match['@declaration.parameter-types']);
+  const parameterLabels = parseJsonStringArrayCapture(match['@declaration.parameter-labels']);
+  const visibility = match['@declaration.visibility']?.text;
+  const declarationKind = match['@declaration.kind']?.text;
 
   return {
     nodeId: makeDefId(filePath, anchor.range, type, nameCap.text),
@@ -550,6 +553,9 @@ function buildDefFromDeclarationMatch(
     ...(parameterCount !== undefined ? { parameterCount } : {}),
     ...(requiredParameterCount !== undefined ? { requiredParameterCount } : {}),
     ...(parameterTypes !== undefined ? { parameterTypes } : {}),
+    ...(parameterLabels !== undefined ? { parameterLabels } : {}),
+    ...(visibility !== undefined ? { visibility } : {}),
+    ...(declarationKind !== undefined ? { declarationKind } : {}),
   };
 }
 
@@ -838,6 +844,7 @@ function pass5CollectReferences(
     const explicitReceiver = extractExplicitReceiver(match);
     const arity = extractArity(match);
     const argumentTypes = extractArgumentTypes(match);
+    const argumentLabels = extractArgumentLabels(match);
 
     const site: ReferenceSite = {
       name: nameCap.text,
@@ -848,6 +855,7 @@ function pass5CollectReferences(
       ...(explicitReceiver !== undefined ? { explicitReceiver } : {}),
       ...(arity !== undefined ? { arity } : {}),
       ...(argumentTypes !== undefined ? { argumentTypes } : {}),
+      ...(argumentLabels !== undefined ? { argumentLabels } : {}),
     };
     referenceSites.push(site);
   }
@@ -923,6 +931,18 @@ function extractArity(match: CaptureMatch): number | undefined {
 
 function extractArgumentTypes(match: CaptureMatch): readonly string[] | undefined {
   const cap = match['@reference.parameter-types'];
+  if (cap === undefined) return undefined;
+  try {
+    const parsed = JSON.parse(cap.text);
+    if (Array.isArray(parsed) && parsed.every((x) => typeof x === 'string')) return parsed;
+  } catch {
+    /* malformed — fall through */
+  }
+  return undefined;
+}
+
+function extractArgumentLabels(match: CaptureMatch): readonly string[] | undefined {
+  const cap = match['@reference.argument-labels'];
   if (cap === undefined) return undefined;
   try {
     const parsed = JSON.parse(cap.text);

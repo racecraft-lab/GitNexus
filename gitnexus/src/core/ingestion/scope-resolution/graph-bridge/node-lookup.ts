@@ -91,8 +91,17 @@ export function buildGraphNodeLookup(graph: KnowledgeGraph): GraphNodeLookup {
       // a parameter-types-suffixed key so resolveDefGraphId can find
       // the right overload by matching its def's parameterTypes.
       const pTypes = (props as { parameterTypes?: readonly string[] }).parameterTypes;
-      if (pTypes !== undefined && pTypes.length > 0 && node.label === 'Method') {
-        const pKey = qualifiedKey(props.filePath, node.label, `${qualified}~${pTypes.join(',')}`);
+      const pLabels = (props as { parameterLabels?: readonly string[] }).parameterLabels;
+      if (
+        pTypes !== undefined &&
+        pTypes.length > 0 &&
+        (node.label === 'Method' || node.label === 'Function')
+      ) {
+        const pKey = qualifiedKey(
+          props.filePath,
+          node.label,
+          `${qualified}~${parameterDiscriminator(pTypes, pLabels)}`,
+        );
         // Each overload is unique — set unconditionally.
         lookup.set(pKey, node.id);
       }
@@ -106,6 +115,16 @@ export function buildGraphNodeLookup(graph: KnowledgeGraph): GraphNodeLookup {
     if (!lookup.has(sKey)) lookup.set(sKey, node.id);
   }
   return lookup;
+}
+
+export function parameterDiscriminator(
+  parameterTypes: readonly string[],
+  parameterLabels: readonly string[] | undefined,
+): string {
+  if (parameterLabels !== undefined && parameterLabels.length > 0) {
+    return parameterTypes.map((type, index) => `${parameterLabels[index] ?? ''}:${type}`).join(',');
+  }
+  return parameterTypes.join(',');
 }
 
 export function isLinkableLabel(label: NodeLabel): boolean {

@@ -154,10 +154,12 @@ const processParsingWithWorkers = async (
         parameterCount: sym.parameterCount,
         requiredParameterCount: sym.requiredParameterCount,
         parameterTypes: sym.parameterTypes,
+        parameterLabels: sym.parameterLabels,
         returnType: sym.returnType,
         declaredType: sym.declaredType,
         ownerId: sym.ownerId,
         qualifiedName: sym.qualifiedName,
+        visibility: sym.visibility,
       });
     }
 
@@ -718,10 +720,12 @@ const processParsingSequential = async (
         parameterCount: methodProps.parameterCount as number | undefined,
         requiredParameterCount: methodProps.requiredParameterCount as number | undefined,
         parameterTypes: methodProps.parameterTypes as string[] | undefined,
+        parameterLabels: methodProps.parameterLabels as string[] | undefined,
         returnType: methodProps.returnType as string | undefined,
         declaredType,
         ownerId: enclosingClassId ?? undefined,
         qualifiedName: qualifiedTypeName,
+        visibility: methodProps.visibility as string | undefined,
       });
 
       const fileId = generateId('File', file.path);

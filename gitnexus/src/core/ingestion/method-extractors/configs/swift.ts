@@ -30,6 +30,8 @@ const SWIFT_VIS = new Set<MethodVisibility>([
  * (not a 'name' field) on both function_declaration and protocol_function_declaration.
  */
 function extractSwiftName(node: SyntaxNode): string | undefined {
+  if (node.type === 'subscript_declaration') return 'subscript';
+
   // Try field-based name first
   const nameField = node.childForFieldName('name');
   if (nameField) return nameField.text;
@@ -169,6 +171,7 @@ function extractSwiftParameters(node: SyntaxNode): ParameterInfo[] {
 
     params.push({
       name: paramName,
+      label: swiftExternalParameterLabel(child),
       type: typeName,
       rawType: rawTypeName,
       isOptional,
@@ -177,6 +180,16 @@ function extractSwiftParameters(node: SyntaxNode): ParameterInfo[] {
   }
 
   return params;
+}
+
+function swiftExternalParameterLabel(node: SyntaxNode): string {
+  const names: string[] = [];
+  for (let i = 0; i < node.namedChildCount; i++) {
+    const part = node.namedChild(i);
+    if (part?.type === 'simple_identifier') names.push(part.text);
+  }
+  if (names.length === 0) return '';
+  return names[0] === '_' ? '' : names[0]!;
 }
 
 /**
@@ -264,14 +277,13 @@ function extractSwiftAnnotations(node: SyntaxNode): string[] {
 export const swiftMethodConfig: MethodExtractionConfig = {
   language: SupportedLanguages.Swift,
 
-  // Keep this conservative until Swift type-shape coverage is expanded.
-  // TODO: Verify struct_declaration, enum_declaration, extension_declaration, actor_declaration
-  // node types once tree-sitter-swift loads on Node 22, and add them here if they are distinct.
-  // protocol_declaration is a separate, confirmed node type.
+  // tree-sitter-swift 0.7.x models class, struct, enum, actor, and extension
+  // declarations as class_declaration; protocol_declaration is separate.
   typeDeclarationNodes: ['class_declaration', 'protocol_declaration'],
 
-  // function_declaration for class/struct methods, protocol_function_declaration for protocol methods
-  methodNodeTypes: ['function_declaration', 'protocol_function_declaration'],
+  // function_declaration for type methods, protocol_function_declaration for protocol methods,
+  // and subscript_declaration for Swift subscript members.
+  methodNodeTypes: ['function_declaration', 'protocol_function_declaration', 'subscript_declaration'],
 
   bodyNodeTypes: ['class_body', 'protocol_body'],
 

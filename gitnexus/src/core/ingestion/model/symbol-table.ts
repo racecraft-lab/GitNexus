@@ -126,10 +126,13 @@ export interface AddMetadata {
   parameterCount?: number;
   requiredParameterCount?: number;
   parameterTypes?: string[];
+  parameterLabels?: string[];
   returnType?: string;
   declaredType?: string;
   ownerId?: string;
   qualifiedName?: string;
+  visibility?: string;
+  declarationKind?: string;
 }
 
 /**
@@ -275,9 +278,14 @@ export const createSymbolTable = (): InternalSymbolTable => {
       ...(metadata?.parameterTypes !== undefined
         ? { parameterTypes: metadata.parameterTypes }
         : {}),
+      ...(metadata?.parameterLabels !== undefined
+        ? { parameterLabels: metadata.parameterLabels }
+        : {}),
       ...(metadata?.returnType !== undefined ? { returnType: metadata.returnType } : {}),
       ...(metadata?.declaredType !== undefined ? { declaredType: metadata.declaredType } : {}),
       ...(metadata?.ownerId !== undefined ? { ownerId: metadata.ownerId } : {}),
+      ...(metadata?.visibility !== undefined ? { visibility: metadata.visibility } : {}),
+      ...(metadata?.declarationKind !== undefined ? { declarationKind: metadata.declarationKind } : {}),
     };
 
     // A. File Index — unconditional.

@@ -108,9 +108,10 @@ export function runScopeResolution(
       filesSkipped++;
       continue;
     }
-    provider.populateOwners(parsed);
     parsedFiles.push(parsed);
   }
+
+  for (const parsed of parsedFiles) provider.populateOwners(parsed, parsedFiles);
 
   // Reconcile scope-resolution's ownership view into the SemanticModel.
   // See `reconcile-ownership.ts` for the full rationale (Contract
@@ -182,6 +183,7 @@ export function runScopeResolution(
     for (const f of files) fileContents.set(f.path, f.content);
     provider.populateNamespaceSiblings(parsedFiles, indexes, {
       fileContents,
+      resolutionConfig,
       treeCache,
     });
   }

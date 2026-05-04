@@ -43,6 +43,10 @@ export interface CSharpProjectConfig {
 export interface SwiftPackageConfig {
   /** Map of target name -> source directory path (e.g., "SiuperModel" -> "Package/Sources/SiuperModel") */
   targets: Map<string, string>;
+  /** Map of target name -> same-package target dependencies. */
+  targetDependencies?: Map<string, string[]>;
+  /** Map of target name -> SwiftPM target kind. */
+  targetKinds?: Map<string, 'target' | 'executableTarget' | 'testTarget'>;
 }
 
 // ============================================================================
@@ -195,19 +199,35 @@ export async function loadCSharpProjectConfig(repoRoot: string): Promise<CSharpP
 }
 
 export async function loadSwiftPackageConfig(repoRoot: string): Promise<SwiftPackageConfig | null> {
-  // Swift imports are module-name based (e.g., `import SiuperModel`)
-  // SPM convention: Sources/<TargetName>/ or Package/Sources/<TargetName>/
-  // We scan for these directories to build a target map
   const targets = new Map<string, string>();
+  const targetDependencies = new Map<string, string[]>();
+  const targetKinds = new Map<string, 'target' | 'executableTarget' | 'testTarget'>();
 
-  const sourceDirs = ['Sources', 'Package/Sources', 'src'];
+  try {
+    const manifest = await fs.readFile(path.join(repoRoot, 'Package.swift'), 'utf-8');
+    const parsed = parseSwiftPackageManifest(manifest);
+    for (const [name, targetPath] of parsed.targets) targets.set(name, targetPath);
+    for (const [name, deps] of parsed.targetDependencies ?? new Map()) {
+      targetDependencies.set(name, deps);
+    }
+    for (const [name, kind] of parsed.targetKinds ?? new Map()) targetKinds.set(name, kind);
+  } catch {
+    // No Package.swift or unreadable manifest — fall back to directory conventions.
+  }
+
+  // Swift imports are module-name based (e.g., `import SiuperModel`).
+  // SPM conventions include Sources/Source/src/srcs for regular targets
+  // and Tests for test targets when the manifest omits a custom path.
+  const sourceDirs = ['Sources', 'Source', 'src', 'srcs', 'Package/Sources', 'Tests'];
   for (const sourceDir of sourceDirs) {
     try {
       const fullPath = path.join(repoRoot, sourceDir);
       const entries = await fs.readdir(fullPath, { withFileTypes: true });
       for (const entry of entries) {
-        if (entry.isDirectory()) {
+        if (entry.isDirectory() && !targets.has(entry.name)) {
           targets.set(entry.name, sourceDir + '/' + entry.name);
+          targetDependencies.set(entry.name, []);
+          targetKinds.set(entry.name, sourceDir === 'Tests' ? 'testTarget' : 'target');
         }
       }
     } catch {
@@ -219,9 +239,97 @@ export async function loadSwiftPackageConfig(repoRoot: string): Promise<SwiftPac
     if (isDev) {
       console.log(`📦 Loaded ${targets.size} Swift package targets`);
     }
-    return { targets };
+    return { targets, targetDependencies, targetKinds };
   }
   return null;
+}
+
+export function parseSwiftPackageManifest(manifest: string): SwiftPackageConfig {
+  const targets = new Map<string, string>();
+  const targetDependencies = new Map<string, string[]>();
+  const targetKinds = new Map<string, 'target' | 'executableTarget' | 'testTarget'>();
+  const calls = extractSwiftPackageTargetCalls(manifest);
+
+  for (const call of calls) {
+    const name = labeledStringArgument(call.body, 'name');
+    if (name === null) continue;
+    const customPath = labeledStringArgument(call.body, 'path');
+    const defaultPath = call.kind === 'testTarget' ? `Tests/${name}` : `Sources/${name}`;
+    targets.set(name, normalizeConfigPath(customPath ?? defaultPath));
+    targetDependencies.set(name, extractSwiftTargetDependencies(call.body));
+    targetKinds.set(name, call.kind);
+  }
+
+  return { targets, targetDependencies, targetKinds };
+}
+
+function extractSwiftPackageTargetCalls(
+  manifest: string,
+): Array<{ kind: 'target' | 'executableTarget' | 'testTarget'; body: string }> {
+  const out: Array<{ kind: 'target' | 'executableTarget' | 'testTarget'; body: string }> = [];
+  const re = /\.(target|executableTarget|testTarget)\s*\(/g;
+  for (const match of manifest.matchAll(re)) {
+    const kind = match[1] as 'target' | 'executableTarget' | 'testTarget';
+    const open = (match.index ?? 0) + match[0].length - 1;
+    const close = findBalancedClose(manifest, open, '(', ')');
+    if (close === -1) continue;
+    out.push({ kind, body: manifest.slice(open + 1, close) });
+  }
+  return out;
+}
+
+function labeledStringArgument(body: string, label: string): string | null {
+  const re = new RegExp(`\\b${label}\\s*:\\s*"([^"]+)"`);
+  return body.match(re)?.[1] ?? null;
+}
+
+function extractSwiftTargetDependencies(body: string): string[] {
+  const label = body.search(/\bdependencies\s*:/);
+  if (label === -1) return [];
+  const open = body.indexOf('[', label);
+  if (open === -1) return [];
+  const close = findBalancedClose(body, open, '[', ']');
+  if (close === -1) return [];
+  const text = body.slice(open + 1, close);
+  const deps = new Set<string>();
+  for (const match of text.matchAll(/"([^"]+)"/g)) deps.add(match[1]!);
+  for (const match of text.matchAll(/\.(?:target|byName)\s*\(\s*name\s*:\s*"([^"]+)"/g)) {
+    deps.add(match[1]!);
+  }
+  return [...deps].sort();
+}
+
+function findBalancedClose(text: string, open: number, openChar: string, closeChar: string): number {
+  let depth = 0;
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+  for (let i = open; i < text.length; i++) {
+    const ch = text[i]!;
+    if (quote !== null) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === '\\') {
+        escaped = true;
+      } else if (ch === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === openChar) depth++;
+    else if (ch === closeChar) {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+function normalizeConfigPath(value: string): string {
+  return value.replace(/\\/g, '/').replace(/^\.\/+/, '').replace(/\/+$/, '');
 }
 
 // ============================================================================

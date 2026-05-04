@@ -9,6 +9,8 @@ export type MethodVisibility = FieldVisibility;
 
 export interface ParameterInfo {
   name: string;
+  /** External/call-site label when the language has one; empty string means omitted. */
+  label?: string | null;
   type: string | null;
   /** Full type text including generic/template args (e.g. 'vector<int>', 'List<String>').
    *  Used by typeTagForId for overload disambiguation where generic args matter.

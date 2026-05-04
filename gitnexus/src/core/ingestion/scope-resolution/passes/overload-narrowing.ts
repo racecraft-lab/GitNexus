@@ -29,6 +29,7 @@ export function narrowOverloadCandidates(
   overloads: readonly SymbolDefinition[],
   argCount: number | undefined,
   argTypes: readonly string[] | undefined,
+  argLabels?: readonly string[],
 ): readonly SymbolDefinition[] {
   if (overloads.length === 0) return [];
 
@@ -51,6 +52,11 @@ export function narrowOverloadCandidates(
   const candidates: readonly SymbolDefinition[] =
     arityMatches.length > 0 ? arityMatches : overloads;
 
+  if (argLabels !== undefined && argLabels.length > 0) {
+    const labeled = candidates.filter((d) => labelsMatch(d.parameterLabels, argLabels));
+    if (labeled.length > 0) return labeled;
+  }
+
   if (argTypes !== undefined && argTypes.length > 0) {
     const typed = candidates.filter((d) => {
       const params = d.parameterTypes;
@@ -65,4 +71,17 @@ export function narrowOverloadCandidates(
   }
 
   return candidates;
+}
+
+function labelsMatch(
+  parameterLabels: readonly string[] | undefined,
+  argumentLabels: readonly string[],
+): boolean {
+  if (parameterLabels === undefined || parameterLabels.length === 0) return false;
+  for (let i = 0; i < argumentLabels.length && i < parameterLabels.length; i++) {
+    const arg = argumentLabels[i] ?? '';
+    if (arg === '') continue;
+    if (arg !== parameterLabels[i]) return false;
+  }
+  return true;
 }

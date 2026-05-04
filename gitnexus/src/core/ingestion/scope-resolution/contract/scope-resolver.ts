@@ -382,7 +382,7 @@ export interface ScopeResolver {
    * by the enclosing class. Other languages may have richer rules
    * (e.g., Java inner-class qualification).
    */
-  populateOwners(parsed: ParsedFile): void;
+  populateOwners(parsed: ParsedFile, parsedFiles?: readonly ParsedFile[]): void;
 
   /**
    * Recognize a `super(...)`-style receiver text. Python returns
@@ -459,6 +459,7 @@ export interface ScopeResolver {
     indexes: ScopeResolutionIndexes,
     ctx: {
       readonly fileContents: ReadonlyMap<string, string>;
+      readonly resolutionConfig?: unknown;
       /** Pre-parsed tree-sitter trees keyed by file path. Same cache
        *  the orchestrator hands to `extractParsedFile`; passing it
        *  through here lets per-language hooks read the AST without

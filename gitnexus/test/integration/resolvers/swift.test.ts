@@ -305,6 +305,17 @@ describe.skipIf(!swiftAvailable)('Swift extension deduplication', () => {
     );
     expect(saveCall).toBeDefined();
   });
+
+  it('resolves product.displayName() to the extension-owned member', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const extensionCall = calls.find(
+      (c) =>
+        c.target === 'displayName' &&
+        c.source === 'process' &&
+        c.targetFilePath === 'ProductExtensions.swift',
+    );
+    expect(extensionCall).toBeDefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -459,16 +470,8 @@ describe.skipIf(!swiftAvailable)('Swift await / try expression unwrapping', () =
 });
 
 // ---------------------------------------------------------------------------
-// For-in loop element type inference: extractForLoopBinding derives element
-// type from the iterable's declared type annotation (e.g., [User] → User).
-//
-// KNOWN GAP: The type-env correctly stores declarationTypeNodes for Swift
-// array types ([User]), but the call-processor's re-parse path doesn't
-// propagate the for-loop binding to receiver resolution. The type-env
-// infrastructure (extractForLoopBinding, extractSwiftElementTypeFromTypeNode,
-// declarationTypeNodes population for type_annotation) is in place — the
-// integration gap is in how processCalls rebuilds TypeEnv for call resolution.
-// Fixture: swift-for-loop-inference/ (ready for when this is wired up).
+// For-in loop element type inference: Swift registry-primary captures for-loop
+// aliases so element member calls resolve through the collection's element type.
 // ---------------------------------------------------------------------------
 
 describe.skipIf(!swiftAvailable)('Swift for-in loop element type inference', () => {
@@ -919,6 +922,164 @@ describe.skipIf(!swiftAvailable)('Swift overloaded method disambiguation', () =>
   it('emits exactly 3 METHOD_IMPLEMENTS edges total', () => {
     const mi = getRelationships(result, 'METHOD_IMPLEMENTS');
     expect(mi.length).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// First-class Swift regression coverage: module visibility, SwiftPM target metadata,
+// extension members, same-type label overloads, closures, and declaration shapes.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!swiftAvailable || !swiftRegistryPrimary)(
+  'SwiftPM custom target paths and dependencies',
+  () => {
+    let result: PipelineResult;
+
+    beforeAll(async () => {
+      result = await runPipelineFromRepo(path.join(FIXTURES, 'swift-package-custom-targets'), () => {});
+    }, 60000);
+
+    it('resolves an import from a custom executable target path to its custom library target path', () => {
+      const calls = getRelationships(result, 'CALLS');
+      const factoryCall = calls.find(
+        (c) => c.target === 'makeCoreService' && c.targetFilePath === 'Modules/Core/CoreService.swift',
+      );
+      expect(factoryCall).toBeDefined();
+    });
+
+    it('resolves member calls through the imported custom-path target', () => {
+      const calls = getRelationships(result, 'CALLS');
+      const runCall = calls.find(
+        (c) => c.target === 'runCore' && c.targetFilePath === 'Modules/Core/CoreService.swift',
+      );
+      expect(runCall).toBeDefined();
+    });
+  },
+);
+
+describe.skipIf(!swiftAvailable || !swiftRegistryPrimary)(
+  'Swift module visibility and @testable imports',
+  () => {
+    let result: PipelineResult;
+
+    beforeAll(async () => {
+      result = await runPipelineFromRepo(path.join(FIXTURES, 'swift-module-visibility'), () => {});
+    }, 60000);
+
+    it('exports public symbols to an importing target', () => {
+      const calls = getRelationships(result, 'CALLS');
+      expect(
+        calls.find((c) => c.target === 'publicHelper' && c.targetFilePath === 'Sources/Models/API.swift'),
+      ).toBeDefined();
+      expect(
+        calls.find((c) => c.target === 'doWork' && c.targetFilePath === 'Sources/Models/API.swift'),
+      ).toBeDefined();
+    });
+
+    it('does not export internal or private helpers to a normal importing target', () => {
+      const calls = getRelationships(result, 'CALLS');
+      const appCalls = calls.filter((c) => c.source === 'runApp');
+      expect(appCalls.find((c) => c.target === 'internalHelper')).toBeUndefined();
+      expect(appCalls.find((c) => c.target === 'secretHelper')).toBeUndefined();
+      expect(appCalls.find((c) => c.target === 'fileOnlyHelper')).toBeUndefined();
+    });
+
+    it('allows @testable import to resolve internal helpers without exposing private helpers', () => {
+      const calls = getRelationships(result, 'CALLS');
+      const testInternalCall = calls.find(
+        (c) =>
+          c.source === 'runTests' &&
+          c.target === 'internalHelper' &&
+          c.targetFilePath === 'Sources/Models/API.swift',
+      );
+      expect(testInternalCall).toBeDefined();
+      expect(calls.find((c) => c.source === 'runTests' && c.target === 'secretHelper')).toBeUndefined();
+    });
+  },
+);
+
+describe.skipIf(!swiftAvailable || !swiftRegistryPrimary)(
+  'Swift same-type external label overloads and trailing closures',
+  () => {
+    let result: PipelineResult;
+
+    beforeAll(async () => {
+      result = await runPipelineFromRepo(path.join(FIXTURES, 'swift-label-overload'), () => {});
+    }, 60000);
+
+    it('keeps same-arity same-type overload declarations separate by external label', () => {
+      const functions = getNodesByLabelFull(result, 'Function');
+      const finds = functions.filter((n) => n.name === 'find' && n.properties.filePath === 'Lookup.swift');
+      expect(finds.length).toBe(2);
+      expect(finds.map((n) => n.properties.parameterLabels).sort()).toEqual([['id'], ['name']]);
+    });
+
+    it('resolves both same-type label overload call sites', () => {
+      const calls = getRelationships(result, 'CALLS');
+      const findCalls = calls.filter((c) => c.source === 'runLookup' && c.target === 'find');
+      expect(findCalls.length).toBe(2);
+    });
+
+    it('counts a trailing closure as an argument and resolves the call body receiver', () => {
+      const calls = getRelationships(result, 'CALLS');
+      expect(calls.find((c) => c.source === 'runLookup' && c.target === 'perform')).toBeDefined();
+      expect(calls.find((c) => c.source === 'runLookup' && c.target === 'finish')).toBeDefined();
+    });
+  },
+);
+
+describe.skipIf(!swiftAvailable || !swiftRegistryPrimary)(
+  'Swift closure-local receiver inference',
+  () => {
+    let result: PipelineResult;
+
+    beforeAll(async () => {
+      result = await runPipelineFromRepo(
+        path.join(FIXTURES, 'swift-closure-receiver-inference'),
+        () => {},
+      );
+    }, 60000);
+
+    it('resolves named closure parameters from collection element type', () => {
+      const calls = getRelationships(result, 'CALLS');
+      const namedClosureCall = calls.find((c) => c.source === 'processClosures' && c.target === 'save');
+      expect(namedClosureCall).toBeDefined();
+      expect(namedClosureCall!.targetFilePath).toBe('Models.swift');
+    });
+
+    it('resolves shorthand $0 closure receivers from collection element type', () => {
+      const calls = getRelationships(result, 'CALLS');
+      const saveCalls = calls.filter((c) => c.source === 'processClosures' && c.target === 'save');
+      expect(saveCalls.length).toBe(2);
+      expect(saveCalls.every((c) => c.targetFilePath === 'Models.swift')).toBe(true);
+    });
+  },
+);
+
+describe.skipIf(!swiftAvailable || !swiftRegistryPrimary)('Swift declaration shapes', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'swift-declaration-shapes'), () => {});
+  }, 60000);
+
+  it('models associatedtype declarations as type aliases', () => {
+    const aliases = getNodesByLabel(result, 'TypeAlias');
+    expect(aliases).toContain('Entity');
+  });
+
+  it('models subscript declarations as callable members', () => {
+    const functions = getNodesByLabelFull(result, 'Function');
+    const methods = getNodesByLabelFull(result, 'Method');
+    const subscripts = [...functions, ...methods].filter((n) => n.name === 'subscript');
+    expect(subscripts.length).toBeGreaterThan(0);
+  });
+
+  it('keeps actor methods resolvable through actor constructor inference', () => {
+    const classes = getNodesByLabel(result, 'Class');
+    expect(classes).toContain('Cache');
+    const calls = getRelationships(result, 'CALLS');
+    expect(calls.find((c) => c.source === 'runCache' && c.target === 'store')).toBeDefined();
   });
 });
 

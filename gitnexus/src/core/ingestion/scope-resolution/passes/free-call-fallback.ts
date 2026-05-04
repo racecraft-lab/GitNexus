@@ -123,6 +123,7 @@ function pickImplicitThisOverload(
     readonly name: string;
     readonly arity?: number;
     readonly argumentTypes?: readonly string[];
+    readonly argumentLabels?: readonly string[];
   },
   scopes: ScopeResolutionIndexes,
   workspaceIndex: WorkspaceResolutionIndex,
@@ -150,6 +151,11 @@ function pickImplicitThisOverload(
   if (overloads.length === 0) return undefined;
   if (overloads.length === 1) return overloads[0];
 
-  const candidates = narrowOverloadCandidates(overloads, site.arity, site.argumentTypes);
+  const candidates = narrowOverloadCandidates(
+    overloads,
+    site.arity,
+    site.argumentTypes,
+    site.argumentLabels,
+  );
   return candidates[0];
 }

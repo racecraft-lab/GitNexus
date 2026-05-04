@@ -1229,8 +1229,14 @@ export const SWIFT_QUERIES = `
 ; Type aliases
 (typealias_declaration name: (type_identifier) @name) @definition.type
 
+; Associated types
+(associatedtype_declaration (type_identifier) @name) @definition.type
+
 ; Functions (top-level and methods)
 (function_declaration name: (simple_identifier) @name) @definition.function
+
+; Subscripts
+(subscript_declaration "subscript" @name) @definition.function
 
 ; Protocol method declarations
 (protocol_function_declaration name: (simple_identifier) @name) @definition.method
