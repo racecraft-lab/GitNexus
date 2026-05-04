@@ -143,15 +143,39 @@ jobs:
           # the zizmor cache-poisoning audit. See cache-poisoning audit.
           package-manager-cache: false
 
+      - name: Verify npm publish auth
+        id: npm_auth
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "can_publish=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Release candidate publish skipped::NPM_TOKEN is not configured; skipping npm publish, rc tags, GitHub prerelease, and Docker image publishing."
+            exit 0
+          fi
+
+          if npm whoami --registry https://registry.npmjs.org >/dev/null 2>&1; then
+            echo "can_publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "can_publish=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Release candidate publish skipped::NPM_TOKEN is configured but npm registry did not accept it; skipping npm publish, rc tags, GitHub prerelease, and Docker image publishing."
+          fi
+
       - name: Build gitnexus-shared
+        if: steps.npm_auth.outputs.can_publish == 'true'
         run: npm install && npm run build
         working-directory: gitnexus-shared
 
       - name: Install gitnexus dependencies
+        if: steps.npm_auth.outputs.can_publish == 'true'
         run: npm ci
         working-directory: gitnexus
 
       - name: Resolve rc version
+        if: steps.npm_auth.outputs.can_publish == 'true'
         id: version
         shell: bash
         working-directory: gitnexus
@@ -200,12 +224,14 @@ jobs:
           fi
           rm -f "$NPM_STDERR_VERSIONS"
 
+          TAGS_JSON="$(git tag -l 'v*-rc.*' | node -e 'const fs = require("fs"); const tags = fs.readFileSync(0, "utf8").trim().split(/\r?\n/).filter(Boolean); process.stdout.write(JSON.stringify(tags));')"
+
           # 3. Base selection.
           #    - workflow_dispatch + bump ∈ {patch,minor,major} → explicit cycle
           #      reset from latest.
           #    - Everything else (push, or dispatch with bump=auto) → continue
-          #      the highest active rc base > latest if one exists; else
-          #      default to patch from latest.
+          #      the highest active rc base > latest if one exists in npm or
+          #      remote tags; else default to patch from latest.
           if [ "$EVENT_NAME" = "workflow_dispatch" ] \
              && [ -n "${BUMP_INPUT:-}" ] \
              && [ "${BUMP_INPUT:-auto}" != "auto" ]; then
@@ -214,9 +240,16 @@ jobs:
           else
             cat > /tmp/active_base.mjs <<'NODESCRIPT'
           const latest = process.env.LATEST;
-          let v;
-          try { v = JSON.parse(process.env.VERSIONS_JSON); } catch { v = []; }
-          if (!Array.isArray(v)) v = [v];
+          let npmVersions;
+          let tags;
+          try { npmVersions = JSON.parse(process.env.VERSIONS_JSON); } catch { npmVersions = []; }
+          try { tags = JSON.parse(process.env.TAGS_JSON); } catch { tags = []; }
+          if (!Array.isArray(npmVersions)) npmVersions = [npmVersions];
+          if (!Array.isArray(tags)) tags = [tags];
+          const v = [
+            ...npmVersions,
+            ...tags.map(s => typeof s === "string" && s.startsWith("v") ? s.slice(1) : s),
+          ];
           const parse = s => s.split(".").map(n => parseInt(n, 10));
           const gt = (a, b) => {
             const [A, B] = [parse(a), parse(b)];
@@ -232,7 +265,7 @@ jobs:
           const sorted = [...bases].sort((a, b) => gt(a, b) ? 1 : -1);
           process.stdout.write(sorted[sorted.length - 1]);
           NODESCRIPT
-            ACTIVE_BASE="$(LATEST="$CURRENT_LATEST_CLEAN" VERSIONS_JSON="$VERSIONS_JSON" node /tmp/active_base.mjs)"
+            ACTIVE_BASE="$(LATEST="$CURRENT_LATEST_CLEAN" VERSIONS_JSON="$VERSIONS_JSON" TAGS_JSON="$TAGS_JSON" node /tmp/active_base.mjs)"
             if [ -n "$ACTIVE_BASE" ]; then
               BASE="$ACTIVE_BASE"
               echo "Continuing active rc cycle → BASE=$BASE"
@@ -246,21 +279,34 @@ jobs:
           cat > /tmp/next_rc.mjs <<'NODESCRIPT'
           const base = process.env.BASE;
           const prefix = base + "-rc.";
-          let v;
-          try { v = JSON.parse(process.env.VERSIONS_JSON); } catch { v = []; }
-          if (!Array.isArray(v)) v = [v];
+          let npmVersions;
+          let tags;
+          try { npmVersions = JSON.parse(process.env.VERSIONS_JSON); } catch { npmVersions = []; }
+          try { tags = JSON.parse(process.env.TAGS_JSON); } catch { tags = []; }
+          if (!Array.isArray(npmVersions)) npmVersions = [npmVersions];
+          if (!Array.isArray(tags)) tags = [tags];
+          const v = [
+            ...npmVersions,
+            ...tags.map(s => typeof s === "string" && s.startsWith("v") ? s.slice(1) : s),
+          ];
           const ns = v
             .filter(s => typeof s === "string" && s.startsWith(prefix))
             .map(s => parseInt(s.slice(prefix.length), 10))
             .filter(n => Number.isInteger(n) && n >= 0);
           process.stdout.write(String(ns.length ? Math.max(...ns) + 1 : 1));
           NODESCRIPT
-          NEXT_N="$(BASE="$BASE" VERSIONS_JSON="$VERSIONS_JSON" node /tmp/next_rc.mjs)"
+          NEXT_N="$(BASE="$BASE" VERSIONS_JSON="$VERSIONS_JSON" TAGS_JSON="$TAGS_JSON" node /tmp/next_rc.mjs)"
           RC_VERSION="${BASE}-rc.${NEXT_N}"
           echo "Computed rc: $RC_VERSION"
 
           # 5. Defensive: if the exact version already exists on the registry
-          #    (e.g., race with another run), abort before re-publishing.
+          #    or as a remote tag (e.g., race with another run), abort before
+          #    re-publishing.
+          if git rev-parse "refs/tags/v${RC_VERSION}" >/dev/null 2>&1; then
+            echo "::error::Tag v${RC_VERSION} already exists — aborting."
+            exit 1
+          fi
+
           #    Same E404-only pattern used above — a transient network
           #    failure must fail loudly, not pretend the version is missing.
           NPM_STDERR_EXISTS="$(mktemp)"
@@ -285,6 +331,7 @@ jobs:
           echo "rc_version=$RC_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Apply rc version in-CI
+        if: steps.npm_auth.outputs.can_publish == 'true'
         shell: bash
         working-directory: gitnexus
         run: |
@@ -293,10 +340,12 @@ jobs:
             --no-git-tag-version --allow-same-version
 
       - name: Build gitnexus
+        if: steps.npm_auth.outputs.can_publish == 'true'
         run: npm run build
         working-directory: gitnexus
 
       - name: Dry-run publish
+        if: steps.npm_auth.outputs.can_publish == 'true'
         run: npm publish --dry-run --tag rc
         working-directory: gitnexus
 
@@ -310,6 +359,7 @@ jobs:
       # If this push succeeds but npm publish fails, the marker stays on
       # the remote and blocks retries until an operator manually cleans up.
       - name: Create and push rc tags
+        if: steps.npm_auth.outputs.can_publish == 'true'
         id: reltag
         shell: bash
         working-directory: gitnexus
@@ -345,12 +395,14 @@ jobs:
           echo "release_sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Publish to npm (rc dist-tag)
+        if: steps.npm_auth.outputs.can_publish == 'true'
         run: npm publish --provenance --access public --tag rc
         working-directory: gitnexus
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Create GitHub prerelease
+        if: steps.npm_auth.outputs.can_publish == 'true'
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v2
         with:
           tag_name: ${{ steps.reltag.outputs.vtag }}
