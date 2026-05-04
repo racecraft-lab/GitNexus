@@ -192,6 +192,18 @@ gitnexus analyze . --embeddings
 
 Works with Infinity, vLLM, TEI, llama.cpp, Ollama, LM Studio, or OpenAI. When unset, local embeddings are used unchanged.
 
+Optional analyzer and HTTP transport tuning:
+
+```bash
+export GITNEXUS_EMBEDDING_BATCH_SIZE=512          # outer analyzer node batch
+export GITNEXUS_EMBEDDING_SUB_BATCH_SIZE=128      # chunks passed to embedBatch
+export GITNEXUS_EMBEDDING_HTTP_BATCH_SIZE=8       # texts per HTTP request
+export GITNEXUS_EMBEDDING_HTTP_CONCURRENCY=8      # concurrent HTTP requests
+export GITNEXUS_EMBEDDING_HTTP_TIMEOUT_MS=90000   # per-request timeout
+```
+
+For the local ONNX backend, `GITNEXUS_EMBEDDING_THREADS` limits ONNX Runtime CPU threads. It does not control HTTP request parallelism. `GITNEXUS_EMBEDDING_CONCURRENCY` is not a supported variable.
+
 ## Multi-Repo Support
 
 GitNexus supports indexing multiple repositories. Each `gitnexus analyze` registers the repo in a global registry (`~/.gitnexus/registry.json`). The MCP server serves all indexed repos automatically.

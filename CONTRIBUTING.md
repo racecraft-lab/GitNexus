@@ -18,6 +18,21 @@ This project uses the [PolyForm Noncommercial License 1.0.0](https://polyformpro
 3. **Web UI (if needed):** `cd gitnexus-web && npm install`
 4. Run tests as described in [TESTING.md](TESTING.md).
 
+### Optional direnv setup
+
+The repo includes a tracked `.envrc` that loads root `.env`, `gitnexus/.env`,
+and ignored `.envrc.local` files when present, then adds package-local
+`node_modules/.bin` directories to `PATH`.
+
+```bash
+direnv allow
+```
+
+Keep machine-specific values in `.envrc.local`. For example, remote embedding
+endpoint settings, local API keys, or eval keys should not be committed. The
+eval harness stays opt-in; add `dotenv_if_exists eval/.env` to `.envrc.local`
+only when you want eval API keys loaded in every shell for this repo.
+
 ## Branch and pull requests
 
 - Use short-lived branches off the default branch of the repo you are targeting.
