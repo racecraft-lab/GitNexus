@@ -21,35 +21,36 @@
  *   - Receiver inference from explicit annotations, constructor calls,
  *     function return types, direct call-result chains, assignment aliases,
  *     `self`, `super`, optional chaining, `if let` / `guard let`, `await` /
- *     `try`, for-in element types, named closure parameters, and shorthand
- *     closure receivers.
+ *     `try`, for-in element types, tuple and switch/case patterns, `while let`
+ *     iterator bindings, named closure parameters, and shorthand closure
+ *     receivers.
  *   - Class, struct, enum, protocol, actor, extension, associatedtype,
  *     subscript, method, field, annotation, property-wrapper, overload-label,
- *     protocol-dispatch, inherited-member, and field read/write edges.
+ *     protocol-dispatch, inherited-member, attached macro-member,
+ *     `@dynamicMemberLookup`, constant Objective-C selector, conditional
+ *     compilation, generic-constraint, operator, enum-case constructor, `deinit`,
+ *     and field read/write edges.
  *
  * ## Known limitations
  *
- * Swift support intentionally leaves the following unresolved or partially
- * modeled, matching the documented trade-off style used by the Python and
- * TypeScript registry-primary paths.
+ * Swift support now covers the first-class static surface expected from a
+ * registry-primary GitNexus language. It still intentionally leaves the same
+ * kinds of runtime-only behavior unresolved that Python and TypeScript also
+ * document as trade-offs.
  *
- *   1. **Generated declarations** - Swift macros and build-plugin generated
- *      code are not expanded before indexing.
- *   2. **Runtime dynamic dispatch** - Objective-C selectors, KVC/KVO,
- *      `@dynamicMemberLookup`, and reflection-driven calls are not followed.
- *   3. **Conditional compilation** - `#if canImport(...)` / platform guards
- *      are parsed as source text; GitNexus does not evaluate active build
- *      conditions per target.
- *   4. **Advanced generic constraints** - conditional conformances,
- *      `where` clauses, protocol-composition aliases, and associated-type
- *      equality constraints are indexed structurally but not expanded into
- *      alternate dispatch branches.
- *   5. **Pattern-heavy type flow** - tuple destructuring, switch/case pattern
- *      bindings, and `while let` iterator bindings do not currently propagate
- *      receiver types.
- *   6. **Nonstandard callable declarations** - operator overloads, enum case
- *      constructor calls, and `deinit` declarations are not first-class call
- *      targets in the scope resolver.
+ *   1. **Arbitrary generated source** - attached macro declarations that
+ *      advertise `names: named(...)` are materialized as synthetic call targets,
+ *      but GitNexus does not run arbitrary build plugins or external macro
+ *      implementations before indexing.
+ *   2. **Runtime-only dynamic dispatch** - constant Objective-C selectors and
+ *      `@dynamicMemberLookup` subscripts are modeled statically. KVC/KVO,
+ *      reflection, dynamically constructed selectors, and other runtime-only
+ *      dispatch remain unresolved.
+ *   3. **Full Swift type checker semantics** - common `where`/associated-type
+ *      equality and typealias paths are resolved structurally. Exhaustive
+ *      conditional-conformance proof search and control-flow type checking are
+ *      outside the static indexer, matching Python/TypeScript's advanced type
+ *      flow limits.
  */
 export {
   emitSwiftScopeCaptures,

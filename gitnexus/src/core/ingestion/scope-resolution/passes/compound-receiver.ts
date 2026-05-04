@@ -337,7 +337,7 @@ export function resolveCompoundReceiverClass(
     if (segment === undefined) break;
     const memberName = stripCallParens(segment);
     const cs = classScopeByDefId.get(currentClass.nodeId);
-    let memberType = cs?.typeBindings.get(memberName);
+    let memberType = cs?.typeBindings.get(memberName) ?? cs?.typeBindings.get('*');
     if (
       memberType === undefined &&
       options.hoistTypeBindingsToModule === true &&

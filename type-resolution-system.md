@@ -425,9 +425,9 @@ So return-type-aware receiver inference already exists in a constrained downstre
 
 ¶¶ C#: `using static NS.Type;` now captured (last segment as class binding). Non-alias `using NS;` still unsupported — namespace imports can't be reduced to per-symbol bindings without type inference.
 
-††† Swift: `extractPendingAssignment` handles `callResult`, `methodCallResult`, `fieldAccess`, and `copy` bindings. `if let` / `guard let` optional bindings supported via `extractIfGuardBinding`. `await` / `try` expression wrappers are unwrapped before RHS analysis. For-loop element type extraction supports `[User]` array sugar and `Array<User>` generics. See `docs/swift-ingestion-gaps.md` for remaining limitations.
+††† Swift: `extractPendingAssignment` handles `callResult`, `methodCallResult`, `fieldAccess`, and `copy` bindings. `if let` / `guard let` optional bindings supported via `extractIfGuardBinding`. `await` / `try` expression wrappers are unwrapped before RHS analysis. For-loop element type extraction supports `[User]` array sugar and `Array<User>` generics. Registry-primary Swift coverage now also includes tuple destructuring, switch/case patterns, while-let iterator bindings, attached macro member names, dynamic member lookup, constant selectors, generic constraints, and nonstandard callable declarations.
 
-‡‡‡ Swift: `if let` / `guard let` optional bindings supported. `while let`, `switch` / `case` pattern matching, and tuple destructuring not yet implemented.
+‡‡‡ Swift: `if let` / `guard let` optional bindings, `while let`, `switch` / `case` pattern matching, and tuple destructuring are supported in the registry-primary resolver.
 
 \*\*\* Whole-module-import languages (Go, Ruby, C/C++, Swift): namedImportMap entries synthesized from graph-exported symbols via `synthesizeWildcardImportBindings()`. Not from import AST node extraction.
 
@@ -464,7 +464,6 @@ Important gaps still remain:
 - no general cross-file propagation of inferred bindings
 - `this`/`self`/`$this` receivers are not resolved in the fixpoint loop (resolved on-demand at call sites via AST walk instead)
 - limited branch-sensitive narrowing outside selected pattern constructs
-- limited Swift support compared with other languages (see `docs/swift-ingestion-gaps.md`)
 - no complete destructuring-based field typing
 - no MRO/inheritance walking for field lookups (`lookupFieldByOwner` is direct-only)
 - for-loop variables bound at walk time cannot see fixpoint-resolved types (Phase 9B gap)

@@ -31,6 +31,23 @@ const SWIFT_VIS = new Set<MethodVisibility>([
  */
 function extractSwiftName(node: SyntaxNode): string | undefined {
   if (node.type === 'subscript_declaration') return 'subscript';
+  if (node.type === 'init_declaration') return 'init';
+  if (node.type === 'deinit_declaration') return 'deinit';
+
+  if (node.type === 'enum_entry') {
+    const name = node.childForFieldName('name');
+    if (name) return name.text;
+    for (let i = 0; i < node.namedChildCount; i++) {
+      const child = node.namedChild(i);
+      if (child?.type === 'simple_identifier') return child.text;
+    }
+  }
+
+  const operatorMatch = node.text.match(/\bfunc\s+([^\s(]+)\s*\(/);
+  const operatorName = operatorMatch?.[1]?.trim();
+  if (operatorName !== undefined && /^[./=+\-*%<>!&|^~?]+$/.test(operatorName)) {
+    return operatorName;
+  }
 
   // Try field-based name first
   const nameField = node.childForFieldName('name');
@@ -111,6 +128,22 @@ function extractSwiftReturnType(node: SyntaxNode): string | undefined {
  */
 function extractSwiftParameters(node: SyntaxNode): ParameterInfo[] {
   const params: ParameterInfo[] = [];
+
+  if (node.type === 'enum_entry') {
+    const typeParams = node.namedChildren.find((child) => child.type === 'enum_type_parameters');
+    if (typeParams === undefined) return params;
+    for (const child of typeParams.namedChildren) {
+      params.push({
+        name: '',
+        label: '',
+        type: extractSimpleTypeName(child) ?? child.text?.trim() ?? null,
+        rawType: child.text?.trim() ?? null,
+        isOptional: false,
+        isVariadic: false,
+      });
+    }
+    return params;
+  }
 
   // In tree-sitter-swift, parameters are direct children of function_declaration.
   // Default value tokens ('=', literal) are siblings of the parameter node at the
@@ -287,6 +320,8 @@ export const swiftMethodConfig: MethodExtractionConfig = {
     'function_declaration',
     'protocol_function_declaration',
     'subscript_declaration',
+    'deinit_declaration',
+    'enum_entry',
   ],
 
   bodyNodeTypes: ['class_body', 'protocol_body'],

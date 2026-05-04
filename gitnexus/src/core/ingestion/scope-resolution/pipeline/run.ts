@@ -120,6 +120,7 @@ export function runScopeResolution(
   }
   for (const parsed of parsedFiles) provider.populateOwners(parsed, parsedFiles);
   provider.populateWorkspaceOwners?.(parsedFiles, { fileContents: getFileContents() });
+  provider.materializeDefinitions?.(graph, parsedFiles);
 
   // Reconcile scope-resolution's ownership view into the SemanticModel.
   // See `reconcile-ownership.ts` for the full rationale (Contract

@@ -41,6 +41,18 @@ interface SwiftResolutionConfig {
   readonly swiftPackageConfig: SwiftPackageConfig | null;
 }
 
+interface SwiftCaptureContext {
+  readonly inactiveRanges: readonly ByteRange[];
+  readonly macroMembers: ReadonlyMap<string, readonly string[]>;
+  readonly typeAliases: ReadonlyMap<string, string>;
+  readonly dynamicMemberReturnTypes: ReadonlyMap<string, string>;
+}
+
+interface ByteRange {
+  readonly startIndex: number;
+  readonly endIndex: number;
+}
+
 export async function loadSwiftResolutionConfig(repoRoot: string): Promise<SwiftResolutionConfig> {
   return { swiftPackageConfig: await loadSwiftPackageConfig(repoRoot) };
 }
@@ -58,12 +70,15 @@ export function emitSwiftScopeCaptures(
 
   const out: CaptureMatch[] = [];
   const root = tree.rootNode;
+  const context = buildSwiftCaptureContext(sourceText, root);
   out.push({ '@scope.module': nodeToCapture('@scope.module', root) });
 
   const visit = (node: SyntaxNode): void => {
-    emitStructuralCaptures(node, out);
-    emitTypeBindingCaptures(node, out);
-    emitReferenceCaptures(node, out);
+    if (isInsideInactiveSwiftRange(node, context.inactiveRanges)) return;
+
+    emitStructuralCaptures(node, out, context);
+    emitTypeBindingCaptures(node, out, context);
+    emitReferenceCaptures(node, out, context);
 
     for (let i = 0; i < node.namedChildCount; i++) {
       const child = node.namedChild(i);
@@ -76,7 +91,11 @@ export function emitSwiftScopeCaptures(
   return out;
 }
 
-function emitStructuralCaptures(node: SyntaxNode, out: CaptureMatch[]): void {
+function emitStructuralCaptures(
+  node: SyntaxNode,
+  out: CaptureMatch[],
+  context: SwiftCaptureContext,
+): void {
   switch (node.type) {
     case 'class_declaration': {
       out.push({ '@scope.class': nodeToCapture('@scope.class', node) });
@@ -100,6 +119,7 @@ function emitStructuralCaptures(node: SyntaxNode, out: CaptureMatch[]): void {
         '@declaration.kind': syntheticCapture('@declaration.kind', node, kind),
       };
       out.push(match);
+      emitAttachedMacroMemberCaptures(node, out, context);
       return;
     }
     case 'protocol_declaration': {
@@ -122,6 +142,7 @@ function emitStructuralCaptures(node: SyntaxNode, out: CaptureMatch[]): void {
     case 'function_declaration': {
       out.push({ '@scope.function': nodeToCapture('@scope.function', node) });
       const name = functionNameNode(node);
+      const operatorName = name === null ? swiftOperatorFunctionName(node) : null;
       if (name !== null) {
         const match: Record<string, Capture> = {
           '@declaration.function': nodeToCapture('@declaration.function', node),
@@ -132,6 +153,19 @@ function emitStructuralCaptures(node: SyntaxNode, out: CaptureMatch[]): void {
             swiftVisibilityForDeclaration(node),
           ),
           '@declaration.kind': syntheticCapture('@declaration.kind', node, 'function'),
+        };
+        addArityMetadata(match, node);
+        out.push(match);
+      } else if (operatorName !== null) {
+        const match: Record<string, Capture> = {
+          '@declaration.function': nodeToCapture('@declaration.function', node),
+          '@declaration.name': syntheticCapture('@declaration.name', node, operatorName),
+          '@declaration.visibility': syntheticCapture(
+            '@declaration.visibility',
+            node,
+            swiftVisibilityForDeclaration(node),
+          ),
+          '@declaration.kind': syntheticCapture('@declaration.kind', node, 'operator'),
         };
         addArityMetadata(match, node);
         out.push(match);
@@ -176,6 +210,19 @@ function emitStructuralCaptures(node: SyntaxNode, out: CaptureMatch[]): void {
     case 'init_declaration':
     case 'deinit_declaration': {
       out.push({ '@scope.function': nodeToCapture('@scope.function', node) });
+      const name = node.type === 'deinit_declaration' ? 'deinit' : 'init';
+      const match: Record<string, Capture> = {
+        '@declaration.constructor': nodeToCapture('@declaration.constructor', node),
+        '@declaration.name': syntheticCapture('@declaration.name', node, name),
+        '@declaration.visibility': syntheticCapture(
+          '@declaration.visibility',
+          node,
+          swiftVisibilityForDeclaration(node),
+        ),
+        '@declaration.kind': syntheticCapture('@declaration.kind', node, name),
+      };
+      addArityMetadata(match, node);
+      out.push(match);
       return;
     }
     case 'typealias_declaration': {
@@ -234,6 +281,18 @@ function emitStructuralCaptures(node: SyntaxNode, out: CaptureMatch[]): void {
           '@declaration.property': nodeToCapture('@declaration.property', node),
           '@declaration.name': nodeToCapture('@declaration.name', name),
         });
+        const ctor: Record<string, Capture> = {
+          '@declaration.function': nodeToCapture('@declaration.function', node),
+          '@declaration.name': nodeToCapture('@declaration.name', name),
+          '@declaration.visibility': syntheticCapture(
+            '@declaration.visibility',
+            node,
+            swiftVisibilityForDeclaration(node),
+          ),
+          '@declaration.kind': syntheticCapture('@declaration.kind', node, 'enum_case'),
+        };
+        addEnumCaseArityMetadata(ctor, node);
+        out.push(ctor);
       }
       return;
     }
@@ -251,20 +310,38 @@ function emitStructuralCaptures(node: SyntaxNode, out: CaptureMatch[]): void {
   }
 }
 
-function emitTypeBindingCaptures(node: SyntaxNode, out: CaptureMatch[]): void {
+function emitTypeBindingCaptures(
+  node: SyntaxNode,
+  out: CaptureMatch[],
+  context: SwiftCaptureContext,
+): void {
   if (node.type === 'function_declaration' || node.type === 'protocol_function_declaration') {
     for (const param of directChildren(node, 'parameter')) {
       const name = parameterLocalName(param);
       const type = parameterTypeText(param);
       if (name !== null && type !== null) {
-        out.push(typeBindingMatch(param, '@type-binding.parameter', name, type));
+        out.push(
+          typeBindingMatch(
+            param,
+            '@type-binding.parameter',
+            name,
+            resolveSwiftAlias(type, context),
+          ),
+        );
       }
     }
 
     const fnName = functionNameNode(node);
     const returnType = returnTypeText(node);
     if (fnName !== null && returnType !== null) {
-      out.push(typeBindingMatch(node, '@type-binding.return', fnName.text, returnType));
+      out.push(
+        typeBindingMatch(
+          node,
+          '@type-binding.return',
+          fnName.text,
+          resolveSwiftAlias(returnType, context),
+        ),
+      );
     }
   }
 
@@ -273,7 +350,20 @@ function emitTypeBindingCaptures(node: SyntaxNode, out: CaptureMatch[]): void {
       const name = parameterLocalName(param);
       const type = parameterTypeText(param);
       if (name !== null && type !== null) {
-        out.push(typeBindingMatch(param, '@type-binding.parameter', name, type));
+        out.push(
+          typeBindingMatch(
+            param,
+            '@type-binding.parameter',
+            name,
+            resolveSwiftAlias(type, context),
+          ),
+        );
+      }
+    }
+    if (/dynamicMember\b/.test(node.text)) {
+      const returnType = swiftSubscriptReturnTypeText(node);
+      if (returnType !== null) {
+        out.push(typeBindingMatch(node, '@type-binding.dynamic-member', '*', returnType));
       }
     }
   }
@@ -283,22 +373,59 @@ function emitTypeBindingCaptures(node: SyntaxNode, out: CaptureMatch[]): void {
       const name = parameterLocalName(param);
       const type = parameterTypeText(param);
       if (name !== null && type !== null) {
-        out.push(typeBindingMatch(param, '@type-binding.parameter', name, type));
+        out.push(
+          typeBindingMatch(
+            param,
+            '@type-binding.parameter',
+            name,
+            resolveSwiftAlias(type, context),
+          ),
+        );
       }
     }
   }
 
-  if (node.type === 'function_declaration' || node.type === 'init_declaration') {
+  if (
+    node.type === 'function_declaration' ||
+    node.type === 'init_declaration' ||
+    node.type === 'deinit_declaration'
+  ) {
     for (const receiver of synthesizeSwiftReceiverBindings(node)) out.push(receiver);
   }
 
+  if (node.type === 'typealias_declaration') {
+    const alias = typeLikeNameNode(node);
+    const target = swiftTypealiasTargetText(node);
+    if (alias !== null && target !== null) {
+      out.push(
+        typeBindingMatch(
+          node,
+          '@type-binding.alias',
+          alias.text,
+          resolveSwiftAlias(target, context),
+        ),
+      );
+    }
+  }
+
   if (node.type === 'property_declaration') {
+    const tupleBindings = tupleDestructuringBindings(node, context);
+    for (const binding of tupleBindings) out.push(binding);
+    if (tupleBindings.length > 0) return;
+
     const name = propertyNameNode(node);
     if (name === null) return;
 
     const annotation = propertyAnnotationType(node);
     if (annotation !== null) {
-      out.push(typeBindingMatch(node, '@type-binding.annotation', name.text, annotation));
+      out.push(
+        typeBindingMatch(
+          node,
+          '@type-binding.annotation',
+          name.text,
+          resolveSwiftAlias(annotation, context),
+        ),
+      );
     }
 
     const value = node.childForFieldName('value');
@@ -324,6 +451,21 @@ function emitTypeBindingCaptures(node: SyntaxNode, out: CaptureMatch[]): void {
     }
   }
 
+  if (node.type === 'while_statement') {
+    const bound = node.childForFieldName('bound_identifier');
+    const value = firstDirectChild(node, 'call_expression');
+    if (bound !== null && value !== null) {
+      const inferred = inferSwiftExpressionTypeFromLocalContext(value, node, context);
+      if (inferred !== null) {
+        out.push(typeBindingMatch(node, '@type-binding.alias', bound.text, inferred));
+      }
+    }
+  }
+
+  if (node.type === 'switch_entry') {
+    for (const binding of switchPatternBindings(node, context)) out.push(binding);
+  }
+
   if (node.type === 'for_statement') {
     const item = node.childForFieldName('item');
     const bound = item === null ? null : firstDescendant(item, new Set(['simple_identifier']));
@@ -336,9 +478,20 @@ function emitTypeBindingCaptures(node: SyntaxNode, out: CaptureMatch[]): void {
   if (node.type === 'call_expression') {
     for (const binding of closureElementBindings(node)) out.push(binding);
   }
+
+  if (node.type === 'navigation_expression') {
+    const dynamicType = inferDynamicMemberNavigationType(node, context);
+    if (dynamicType !== null) {
+      out.push(typeBindingMatch(node, '@type-binding.alias', node.text, dynamicType));
+    }
+  }
 }
 
-function emitReferenceCaptures(node: SyntaxNode, out: CaptureMatch[]): void {
+function emitReferenceCaptures(
+  node: SyntaxNode,
+  out: CaptureMatch[],
+  _context: SwiftCaptureContext,
+): void {
   if (node.type === 'assignment') {
     const target = node.childForFieldName('target');
     const nav = firstDescendant(target, new Set(['navigation_expression']));
@@ -414,6 +567,590 @@ function emitReferenceCaptures(node: SyntaxNode, out: CaptureMatch[]): void {
       ),
     });
   }
+
+  if (SWIFT_BINARY_OPERATOR_EXPRESSIONS.has(node.type)) {
+    const op = swiftBinaryOperatorToken(node);
+    const lhs = node.childForFieldName('lhs') ?? node.firstNamedChild;
+    if (op === null || lhs === null) return;
+    const match: Record<string, Capture> = {
+      '@reference.call.member': nodeToCapture('@reference.call.member', node),
+      '@reference.name': syntheticCapture('@reference.name', node, op),
+      '@reference.receiver': syntheticCapture('@reference.receiver', lhs, lhs.text),
+      '@reference.arity': syntheticCapture('@reference.arity', node, '2'),
+    };
+    out.push(match);
+  }
+}
+
+function buildSwiftCaptureContext(sourceText: string, root: SyntaxNode): SwiftCaptureContext {
+  const macroMembers = new Map<string, string[]>();
+  const typeAliases = new Map<string, string>();
+  const dynamicMemberReturnTypes = new Map<string, string>();
+
+  const visit = (node: SyntaxNode): void => {
+    if (node.type === 'macro_declaration') {
+      const name = functionNameNode(node);
+      const members = swiftAttachedMemberNames(node);
+      if (name !== null && members.length > 0) macroMembers.set(name.text, members);
+    }
+
+    if (node.type === 'typealias_declaration') {
+      const alias = typeLikeNameNode(node);
+      const target = swiftTypealiasTargetText(node);
+      if (alias !== null && target !== null) typeAliases.set(alias.text, target);
+    }
+
+    if (node.type === 'class_declaration' && hasSwiftAttribute(node, 'dynamicMemberLookup')) {
+      const name = typeLikeNameNode(node);
+      const subscript = firstDescendant(node, new Set(['subscript_declaration']));
+      const returnType = subscript === null ? null : swiftSubscriptReturnTypeText(subscript);
+      if (name !== null && returnType !== null) {
+        dynamicMemberReturnTypes.set(name.text, returnType);
+      }
+    }
+
+    for (let i = 0; i < node.namedChildCount; i++) {
+      const child = node.namedChild(i);
+      if (child !== null) visit(child);
+    }
+  };
+
+  visit(root);
+
+  return {
+    inactiveRanges: swiftInactiveConditionalRanges(sourceText),
+    macroMembers,
+    typeAliases,
+    dynamicMemberReturnTypes,
+  };
+}
+
+function emitAttachedMacroMemberCaptures(
+  node: SyntaxNode,
+  out: CaptureMatch[],
+  context: SwiftCaptureContext,
+): void {
+  const attached = attachedSwiftMacroNames(node);
+  if (attached.length === 0) return;
+  const anchor =
+    firstDescendant(firstDirectChild(node, 'modifiers'), new Set(['attribute'])) ?? node;
+
+  for (const macroName of attached) {
+    const members = context.macroMembers.get(macroName);
+    if (members === undefined) continue;
+    for (const member of members) {
+      const match: Record<string, Capture> = {
+        '@declaration.function': syntheticCapture('@declaration.function', anchor, member),
+        '@declaration.name': syntheticCapture('@declaration.name', anchor, member),
+        '@declaration.visibility': syntheticCapture(
+          '@declaration.visibility',
+          anchor,
+          swiftVisibilityForDeclaration(node),
+        ),
+        '@declaration.kind': syntheticCapture('@declaration.kind', anchor, 'macro_member'),
+      };
+      addArityMetadata(match, anchor);
+      out.push(match);
+    }
+  }
+}
+
+function swiftAttachedMemberNames(node: SyntaxNode): string[] {
+  if (!/@attached\s*\(\s*member\b/.test(node.text)) return [];
+  const names: string[] = [];
+  for (const match of node.text.matchAll(/\bnamed\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)/g)) {
+    const name = match[1];
+    if (name !== undefined) names.push(name);
+  }
+  return names;
+}
+
+function attachedSwiftMacroNames(node: SyntaxNode): string[] {
+  const modifiers = firstDirectChild(node, 'modifiers');
+  if (modifiers === null) return [];
+  const names: string[] = [];
+  for (const match of modifiers.text.matchAll(/@([A-Za-z_][A-Za-z0-9_]*)\b/g)) {
+    const name = match[1];
+    if (name !== undefined) names.push(name);
+  }
+  return names;
+}
+
+function hasSwiftAttribute(node: SyntaxNode, name: string): boolean {
+  const modifiers = firstDirectChild(node, 'modifiers');
+  return modifiers !== null && new RegExp(`@${name}\\b`).test(modifiers.text);
+}
+
+function swiftTypealiasTargetText(node: SyntaxNode): string | null {
+  const eq = node.text.indexOf('=');
+  if (eq === -1) return null;
+  const rhs = node.text.slice(eq + 1).trim();
+  return rhs.length > 0 ? rhs : null;
+}
+
+function swiftSubscriptReturnTypeText(node: SyntaxNode): string | null {
+  const match = node.text.match(/->\s*([A-Za-z_][A-Za-z0-9_.]*(?:<[^>{}]+>)?|\[[^\]]+\])/);
+  return match?.[1]?.trim() ?? null;
+}
+
+function resolveSwiftAlias(text: string, context: SwiftCaptureContext): string {
+  const trimmed = text.trim();
+  const normalized = normalizeTypeName(trimmed);
+  return context.typeAliases.get(trimmed) ?? context.typeAliases.get(normalized) ?? trimmed;
+}
+
+function tupleDestructuringBindings(
+  node: SyntaxNode,
+  context: SwiftCaptureContext,
+): CaptureMatch[] {
+  const value = node.childForFieldName('value');
+  if (value?.type !== 'simple_identifier') return [];
+  const rawTupleType = lookupSwiftLocalType(value.text, node, context);
+  const tupleTypes = rawTupleType === null ? null : parseSwiftTupleTypes(rawTupleType, context);
+  if (tupleTypes === null) return [];
+
+  const pattern = node.childForFieldName('name') ?? node.childForFieldName('pattern');
+  const names = collectSwiftPatternIdentifiers(pattern);
+  return names
+    .slice(0, tupleTypes.length)
+    .map((name, idx) => typeBindingMatch(node, '@type-binding.alias', name, tupleTypes[idx]!));
+}
+
+function switchPatternBindings(node: SyntaxNode, context: SwiftCaptureContext): CaptureMatch[] {
+  const switchNode = enclosingNodeOfType(node, 'switch_statement');
+  const expr = switchNode?.childForFieldName('expr');
+  if (expr?.type !== 'simple_identifier') return [];
+  const rawTupleType = lookupSwiftLocalType(expr.text, node, context);
+  const tupleTypes = rawTupleType === null ? null : parseSwiftTupleTypes(rawTupleType, context);
+  if (tupleTypes === null) return [];
+
+  const pattern = firstDescendant(node, new Set(['switch_pattern']));
+  const names = collectSwiftPatternIdentifiers(pattern);
+  return names
+    .slice(0, tupleTypes.length)
+    .map((name, idx) => typeBindingMatch(node, '@type-binding.alias', name, tupleTypes[idx]!));
+}
+
+function collectSwiftPatternIdentifiers(node: SyntaxNode | null | undefined): string[] {
+  if (node === null || node === undefined) return [];
+  const out: string[] = [];
+  const visit = (cur: SyntaxNode): void => {
+    if (cur.type === 'simple_identifier' && cur.text !== '_') {
+      out.push(cur.text);
+      return;
+    }
+    for (let i = 0; i < cur.namedChildCount; i++) {
+      const child = cur.namedChild(i);
+      if (child !== null) visit(child);
+    }
+  };
+  visit(node);
+  return out;
+}
+
+function parseSwiftTupleTypes(
+  rawType: string,
+  context: SwiftCaptureContext,
+): readonly string[] | null {
+  const trimmed = rawType.trim();
+  if (!trimmed.startsWith('(') || !trimmed.endsWith(')')) return null;
+  const inner = trimmed.slice(1, -1).trim();
+  if (inner.length === 0) return [];
+  return splitTopLevelSwiftList(inner).map((part) => {
+    const colon = findTopLevelSeparator(part, ':');
+    const type = colon === -1 ? part : part.slice(colon + 1);
+    return resolveSwiftAlias(type.trim(), context);
+  });
+}
+
+function splitTopLevelSwiftList(text: string): string[] {
+  const parts: string[] = [];
+  let start = 0;
+  let angle = 0;
+  let square = 0;
+  let paren = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (ch === '<') angle++;
+    else if (ch === '>') angle = Math.max(0, angle - 1);
+    else if (ch === '[') square++;
+    else if (ch === ']') square = Math.max(0, square - 1);
+    else if (ch === '(') paren++;
+    else if (ch === ')') paren = Math.max(0, paren - 1);
+    else if (ch === ',' && angle === 0 && square === 0 && paren === 0) {
+      parts.push(text.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  parts.push(text.slice(start).trim());
+  return parts.filter((p) => p.length > 0);
+}
+
+function inferSwiftExpressionTypeFromLocalContext(
+  node: SyntaxNode,
+  scopeNode: SyntaxNode,
+  context: SwiftCaptureContext,
+): string | null {
+  if (node.type !== 'call_expression') return null;
+  const callee = firstCallCallee(node);
+  if (callee?.type !== 'navigation_expression') return null;
+  const nav = navigationParts(callee);
+  if (nav === null) return null;
+  const receiverType = lookupSwiftLocalType(nav.receiverText, scopeNode, context);
+  if (receiverType === null) return null;
+  if (nav.member === 'next') {
+    return extractSwiftGenericElementType(receiverType, context);
+  }
+  return null;
+}
+
+function inferDynamicMemberNavigationType(
+  node: SyntaxNode,
+  context: SwiftCaptureContext,
+): string | null {
+  const nav = navigationParts(node);
+  if (nav === null) return null;
+  if (nav.receiverText.includes('.')) return null;
+  const receiverType = lookupSwiftLocalType(nav.receiverText, node, context);
+  if (receiverType === null) return null;
+  const typeName = normalizeTypeName(resolveSwiftAlias(receiverType, context));
+  return context.dynamicMemberReturnTypes.get(typeName) ?? null;
+}
+
+function lookupSwiftLocalType(
+  name: string,
+  node: SyntaxNode,
+  context: SwiftCaptureContext,
+): string | null {
+  const fn = enclosingSwiftFunction(node);
+  if (fn === null) return null;
+
+  for (const param of directChildren(fn, 'parameter')) {
+    const local = parameterLocalName(param);
+    const type = parameterTypeText(param);
+    if (local === name && type !== null) return resolveSwiftAlias(type, context);
+  }
+
+  return null;
+}
+
+function enclosingSwiftFunction(node: SyntaxNode): SyntaxNode | null {
+  let cur: SyntaxNode | null = node;
+  while (cur !== null) {
+    if (
+      cur.type === 'function_declaration' ||
+      cur.type === 'init_declaration' ||
+      cur.type === 'deinit_declaration' ||
+      cur.type === 'protocol_function_declaration'
+    ) {
+      return cur;
+    }
+    cur = cur.parent;
+  }
+  return null;
+}
+
+function enclosingNodeOfType(node: SyntaxNode, type: string): SyntaxNode | null {
+  let cur: SyntaxNode | null = node;
+  while (cur !== null) {
+    if (cur.type === type) return cur;
+    cur = cur.parent;
+  }
+  return null;
+}
+
+function extractSwiftGenericElementType(
+  rawType: string,
+  context: SwiftCaptureContext,
+): string | null {
+  const resolved = resolveSwiftAlias(rawType, context).trim();
+  if (resolved.startsWith('[') && resolved.endsWith(']')) {
+    const inner = resolved.slice(1, -1);
+    const colon = findTopLevelSeparator(inner, ':');
+    return resolveSwiftAlias(colon === -1 ? inner : inner.slice(colon + 1), context);
+  }
+
+  const open = resolved.indexOf('<');
+  if (open === -1 || !resolved.endsWith('>')) return null;
+  const base = resolved.slice(0, open).trim().split('.').pop() ?? '';
+  const inner = resolved.slice(open + 1, -1);
+  const parts = splitTopLevelSwiftList(inner);
+  if (base === 'Dictionary')
+    return parts[1] === undefined ? null : resolveSwiftAlias(parts[1], context);
+  if (base === 'Result')
+    return parts[0] === undefined ? null : resolveSwiftAlias(parts[0], context);
+  return parts[0] === undefined ? null : resolveSwiftAlias(parts[0], context);
+}
+
+const SWIFT_BINARY_OPERATOR_EXPRESSIONS: ReadonlySet<string> = new Set([
+  'additive_expression',
+  'multiplicative_expression',
+  'comparison_expression',
+  'conjunction_expression',
+  'disjunction_expression',
+  'range_expression',
+]);
+
+function swiftOperatorFunctionName(node: SyntaxNode): string | null {
+  const match = node.text.match(/\bfunc\s+([^\s(]+)\s*\(/);
+  const name = match?.[1]?.trim();
+  if (name === undefined || !isSwiftOperatorSymbol(name)) return null;
+  return name;
+}
+
+function swiftBinaryOperatorToken(node: SyntaxNode): string | null {
+  const lhs = node.childForFieldName('lhs') ?? node.firstNamedChild;
+  const rhs = node.childForFieldName('rhs') ?? node.lastNamedChild;
+  if (lhs === null || rhs === null) return null;
+  const lhsEnd = lhs.endIndex - node.startIndex;
+  const rhsStart = rhs.startIndex - node.startIndex;
+  if (lhsEnd < 0 || rhsStart <= lhsEnd) return null;
+  const between = node.text.slice(lhsEnd, rhsStart).trim();
+  const token = between.split(/\s+/)[0] ?? '';
+  return isSwiftOperatorSymbol(token) ? token : null;
+}
+
+function isSwiftOperatorSymbol(text: string): boolean {
+  return /^[./=+\-*%<>!&|^~?]+$/.test(text);
+}
+
+function addEnumCaseArityMetadata(match: Record<string, Capture>, node: SyntaxNode): void {
+  const params = firstDescendant(node, new Set(['enum_type_parameters']));
+  if (params === null) {
+    match['@declaration.parameter-count'] = syntheticCapture(
+      '@declaration.parameter-count',
+      node,
+      '0',
+    );
+    match['@declaration.required-parameter-count'] = syntheticCapture(
+      '@declaration.required-parameter-count',
+      node,
+      '0',
+    );
+    return;
+  }
+
+  const types = params.namedChildren.map((child) => normalizeTypeName(child.text));
+  match['@declaration.parameter-count'] = syntheticCapture(
+    '@declaration.parameter-count',
+    node,
+    String(types.length),
+  );
+  match['@declaration.required-parameter-count'] = syntheticCapture(
+    '@declaration.required-parameter-count',
+    node,
+    String(types.length),
+  );
+  if (types.length > 0) {
+    match['@declaration.parameter-types'] = syntheticCapture(
+      '@declaration.parameter-types',
+      node,
+      JSON.stringify(types),
+    );
+  }
+}
+
+function swiftInactiveConditionalRanges(sourceText: string): readonly ByteRange[] {
+  const importableModules = swiftImportableModulesForSource(sourceText);
+  const osName = process.env.GITNEXUS_SWIFT_OS ?? defaultSwiftOS();
+  const archName = process.env.GITNEXUS_SWIFT_ARCH ?? process.arch;
+  const customConditions = new Set(
+    (process.env.GITNEXUS_SWIFT_CONDITIONS ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
+  const ranges: ByteRange[] = [];
+  const frames: Array<{
+    parentActive: boolean;
+    active: boolean;
+    definiteBranchTaken: boolean;
+  }> = [];
+  const lineRe = /.*(?:\r?\n|$)/g;
+  for (const match of sourceText.matchAll(lineRe)) {
+    const line = match[0];
+    if (line.length === 0) continue;
+    const startIndex = match.index ?? 0;
+    const endIndex = startIndex + line.length;
+    const trimmed = line.trim();
+    const directive = trimmed.match(/^#(if|elseif|else|endif)\b(.*)$/);
+
+    if (directive !== null) {
+      const kind = directive[1]!;
+      const condition = directive[2]!.trim();
+      if (kind === 'if') {
+        const parentActive = frames.length === 0 ? true : frames[frames.length - 1]!.active;
+        const evalResult = evaluateSwiftCompilationCondition(condition, {
+          importableModules,
+          osName,
+          archName,
+          customConditions,
+        });
+        frames.push({
+          parentActive,
+          active: parentActive && evalResult !== false,
+          definiteBranchTaken: parentActive && evalResult === true,
+        });
+      } else if (kind === 'elseif') {
+        const frame = frames[frames.length - 1];
+        if (frame !== undefined) {
+          const evalResult = evaluateSwiftCompilationCondition(condition, {
+            importableModules,
+            osName,
+            archName,
+            customConditions,
+          });
+          frame.active = frame.parentActive && !frame.definiteBranchTaken && evalResult !== false;
+          if (frame.parentActive && evalResult === true) frame.definiteBranchTaken = true;
+        }
+      } else if (kind === 'else') {
+        const frame = frames[frames.length - 1];
+        if (frame !== undefined) {
+          frame.active = frame.parentActive && !frame.definiteBranchTaken;
+          frame.definiteBranchTaken = true;
+        }
+      } else {
+        frames.pop();
+      }
+      continue;
+    }
+
+    if (frames.some((frame) => !frame.active)) {
+      ranges.push({ startIndex, endIndex });
+    }
+  }
+  return ranges;
+}
+
+function isInsideInactiveSwiftRange(node: SyntaxNode, ranges: readonly ByteRange[]): boolean {
+  return ranges.some(
+    (range) => node.startIndex >= range.startIndex && node.endIndex <= range.endIndex,
+  );
+}
+
+function swiftImportableModulesForSource(sourceText: string): ReadonlySet<string> {
+  const modules = new Set(['Swift', 'Foundation']);
+  for (const match of sourceText.matchAll(
+    /(?:^|\n)\s*(?:@\w+\s+)?import\s+([A-Za-z_][A-Za-z0-9_]*)/g,
+  )) {
+    const moduleName = match[1];
+    if (moduleName !== undefined) modules.add(moduleName);
+  }
+  for (const moduleName of (process.env.GITNEXUS_SWIFT_CAN_IMPORT ?? '').split(',')) {
+    const trimmed = moduleName.trim();
+    if (trimmed.length > 0) modules.add(trimmed);
+  }
+  return modules;
+}
+
+function defaultSwiftOS(): string {
+  switch (process.platform) {
+    case 'darwin':
+      return 'macOS';
+    case 'win32':
+      return 'Windows';
+    case 'linux':
+      return 'Linux';
+    default:
+      return process.platform;
+  }
+}
+
+function evaluateSwiftCompilationCondition(
+  condition: string,
+  context: {
+    readonly importableModules: ReadonlySet<string>;
+    readonly osName: string;
+    readonly archName: string;
+    readonly customConditions: ReadonlySet<string>;
+  },
+): boolean | null {
+  const trimmed = stripBalancedParens(condition.trim());
+  if (trimmed.length === 0) return null;
+
+  const orParts = splitTopLevelOperator(trimmed, '||');
+  if (orParts.length > 1) {
+    const results = orParts.map((part) => evaluateSwiftCompilationCondition(part, context));
+    if (results.some((r) => r === true)) return true;
+    if (results.every((r) => r === false)) return false;
+    return null;
+  }
+
+  const andParts = splitTopLevelOperator(trimmed, '&&');
+  if (andParts.length > 1) {
+    const results = andParts.map((part) => evaluateSwiftCompilationCondition(part, context));
+    if (results.some((r) => r === false)) return false;
+    if (results.every((r) => r === true)) return true;
+    return null;
+  }
+
+  if (trimmed.startsWith('!')) {
+    const inner = evaluateSwiftCompilationCondition(trimmed.slice(1), context);
+    return inner === null ? null : !inner;
+  }
+
+  if (trimmed === 'true') return true;
+  if (trimmed === 'false') return false;
+
+  const canImport = trimmed.match(/^canImport\s*\(\s*([A-Za-z_][A-Za-z0-9_.]*)\s*\)$/);
+  if (canImport !== null) return context.importableModules.has(canImport[1]!);
+
+  const os = trimmed.match(/^os\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)$/);
+  if (os !== null) return os[1] === context.osName;
+
+  const arch = trimmed.match(/^arch\s*\(\s*([A-Za-z0-9_]+)\s*\)$/);
+  if (arch !== null) {
+    const normalized = context.archName === 'x64' ? 'x86_64' : context.archName;
+    return arch[1] === normalized;
+  }
+
+  const targetEnvironment = trimmed.match(
+    /^targetEnvironment\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)$/,
+  );
+  if (targetEnvironment !== null) return false;
+
+  if (/^(?:swift|compiler)\s*\(/.test(trimmed)) return null;
+  if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(trimmed)) return context.customConditions.has(trimmed);
+  return null;
+}
+
+function stripBalancedParens(text: string): string {
+  let out = text;
+  while (out.startsWith('(') && out.endsWith(')')) {
+    let depth = 0;
+    let balanced = true;
+    for (let i = 0; i < out.length; i++) {
+      const ch = out[i]!;
+      if (ch === '(') depth++;
+      else if (ch === ')') depth--;
+      if (depth === 0 && i < out.length - 1) {
+        balanced = false;
+        break;
+      }
+    }
+    if (!balanced || depth !== 0) break;
+    out = out.slice(1, -1).trim();
+  }
+  return out;
+}
+
+function splitTopLevelOperator(text: string, operatorText: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (ch === '(') depth++;
+    else if (ch === ')') depth = Math.max(0, depth - 1);
+    if (depth === 0 && text.startsWith(operatorText, i)) {
+      parts.push(text.slice(start, i).trim());
+      start = i + operatorText.length;
+      i += operatorText.length - 1;
+    }
+  }
+  if (parts.length === 0) return [text];
+  parts.push(text.slice(start).trim());
+  return parts;
 }
 
 export function interpretSwiftImport(captures: CaptureMatch): ParsedImport | null {
@@ -460,6 +1197,15 @@ export function swiftBindingScopeFor(
   innermost: Scope,
   tree: ScopeTree,
 ): ScopeId | null {
+  if (decl['@type-binding.dynamic-member'] !== undefined) {
+    let cur: Scope | undefined = innermost;
+    while (cur !== undefined && cur.kind !== 'Class') {
+      if (cur.parent === null) break;
+      cur = tree.getScope(cur.parent);
+    }
+    return cur?.kind === 'Class' ? cur.id : null;
+  }
+
   if (decl['@type-binding.return'] !== undefined) {
     let cur: Scope | undefined = innermost;
     while (cur !== undefined && cur.kind !== 'Module') {

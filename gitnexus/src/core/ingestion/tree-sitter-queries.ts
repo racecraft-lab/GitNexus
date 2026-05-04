@@ -1243,12 +1243,14 @@ export const SWIFT_QUERIES = `
 
 ; Initializers
 (init_declaration) @definition.constructor
+(deinit_declaration "deinit" @name) @definition.constructor
 
 ; Properties (stored and computed)
 (property_declaration (pattern (simple_identifier) @name)) @definition.property
 
 ; Enum cases
 (enum_entry (simple_identifier) @name) @definition.property
+(enum_entry name: (simple_identifier) @name) @definition.function
 
 ; Imports
 (import_declaration (identifier) @import.source) @import

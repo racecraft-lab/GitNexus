@@ -408,6 +408,24 @@ export interface ScopeResolver {
   ) => void;
 
   /**
+   * Optional bridge for declarations that exist in a provider's scope model
+   * but cannot be emitted by the parse-phase tree-sitter query as ordinary
+   * graph nodes. Swift uses this for attached macros advertising
+   * `names: named(member)` and operator declarations whose operator token is
+   * not exposed as a stable named child by tree-sitter. These declarations are
+   * valid static targets for scope resolution, but the graph lookup needs a
+   * materialized node to map them.
+   *
+   * Runs after ownership population on ParsedFile defs and before graph-node
+   * lookup construction, so added nodes are available to the standard
+   * scope-resolution edge emitters.
+   */
+  readonly materializeDefinitions?: (
+    graph: KnowledgeGraph,
+    parsedFiles: readonly ParsedFile[],
+  ) => number;
+
+  /**
    * Recognize a `super(...)`-style receiver text. Python returns
    * `/^super\s*\(/.test(t)`. Java returns `t === 'super'`. C++ may
    * also need `this` capture. Languages without inheritance return

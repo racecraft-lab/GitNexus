@@ -1181,6 +1181,153 @@ describe.skipIf(!swiftAvailable || !swiftRegistryPrimary)('Swift declaration sha
   });
 });
 
+describe.skipIf(!swiftAvailable || !swiftRegistryPrimary)(
+  'Swift first-class static support edge cases',
+  () => {
+    let result: PipelineResult;
+
+    beforeAll(async () => {
+      result = await runPipelineFromRepo(path.join(FIXTURES, 'swift-first-class-gaps'), () => {});
+    }, 60000);
+
+    it('synthesizes member declarations from attached macro names and resolves their calls', () => {
+      const calls = getRelationships(result, 'CALLS');
+      const macroCall = calls.find(
+        (c) =>
+          c.source === 'macroFlow' &&
+          c.target === 'macroSave' &&
+          c.targetFilePath === 'Sources/AvailableKit/Models.swift',
+      );
+      expect(macroCall).toBeDefined();
+      expect(macroCall!.targetLabel).toBe('Function');
+      expect(macroCall!.rel.targetId).toContain('MacroUser.macroSave');
+
+      const defines = getRelationships(result, 'DEFINES');
+      expect(
+        defines.find(
+          (e) =>
+            e.sourceLabel === 'File' &&
+            e.target === 'macroSave' &&
+            e.targetFilePath === 'Sources/AvailableKit/Models.swift',
+        ),
+      ).toBeDefined();
+
+      const members = getRelationships(result, 'HAS_METHOD');
+      expect(
+        members.find((e) => e.source === 'MacroUser' && e.target === 'macroSave'),
+      ).toBeDefined();
+    });
+
+    it('resolves @dynamicMemberLookup member chains through subscript(dynamicMember:)', () => {
+      const calls = getRelationships(result, 'CALLS');
+      const dynamicSave = calls.find(
+        (c) =>
+          c.source === 'runtimeDispatch' &&
+          c.target === 'save' &&
+          c.targetFilePath === 'Sources/AvailableKit/Models.swift',
+      );
+      expect(dynamicSave).toBeDefined();
+    });
+
+    it('resolves constant Objective-C selector perform calls to the selected method', () => {
+      const calls = getRelationships(result, 'CALLS');
+      const selectorCall = calls.find(
+        (c) =>
+          c.source === 'runtimeDispatch' &&
+          c.target === 'selectedAction' &&
+          c.targetFilePath === 'Sources/App/main.swift',
+      );
+      expect(selectorCall).toBeDefined();
+    });
+
+    it('evaluates canImport conditional compilation and excludes inactive branch calls', () => {
+      const calls = getRelationships(result, 'CALLS');
+      expect(
+        calls.find(
+          (c) =>
+            c.source === 'conditionalFlow' &&
+            c.target === 'selectedFactory' &&
+            c.targetFilePath === 'Sources/AvailableKit/Models.swift',
+        ),
+      ).toBeDefined();
+      expect(
+        calls.find((c) => c.source === 'conditionalFlow' && c.target === 'inactiveFactory'),
+      ).toBeUndefined();
+      expect(
+        calls.find(
+          (c) =>
+            c.source === 'conditionalFlow' &&
+            c.target === 'save' &&
+            c.targetFilePath === 'Sources/AvailableKit/Models.swift',
+        ),
+      ).toBeDefined();
+    });
+
+    it('resolves tuple, switch-case, and while-let pattern receiver types', () => {
+      const calls = getRelationships(result, 'CALLS');
+      const saveCalls = calls.filter((c) => c.source === 'patternFlow' && c.target === 'save');
+      expect(
+        saveCalls.filter((c) => c.targetFilePath === 'Sources/AvailableKit/Models.swift').length,
+      ).toBeGreaterThanOrEqual(5);
+    });
+
+    it('models generic where/associated-type constrained extension members as callable dispatch', () => {
+      const calls = getRelationships(result, 'CALLS');
+      const storeUserCalls = calls.filter(
+        (c) =>
+          c.source === 'genericFlow' &&
+          c.target === 'storeUser' &&
+          c.targetFilePath === 'Sources/AvailableKit/Models.swift',
+      );
+      expect(storeUserCalls.length).toBe(2);
+    });
+
+    it('resolves operator overload and enum case constructor calls as first-class call targets', () => {
+      const calls = getRelationships(result, 'CALLS');
+      expect(
+        calls.find(
+          (c) =>
+            c.source === 'nonstandardCalls' &&
+            c.target === '+' &&
+            c.targetFilePath === 'Sources/AvailableKit/Models.swift',
+        ),
+      ).toBeDefined();
+      expect(
+        getRelationships(result, 'HAS_METHOD').find(
+          (e) => e.source === 'Vector' && e.target === '+',
+        ),
+      ).toBeDefined();
+      expect(
+        calls.find(
+          (c) =>
+            c.source === 'nonstandardCalls' &&
+            c.target === 'user' &&
+            c.targetFilePath === 'Sources/AvailableKit/Models.swift',
+        ),
+      ).toBeDefined();
+    });
+
+    it('models deinit as a callable class member and attributes cleanup calls to it', () => {
+      const constructors = getNodesByLabelFull(result, 'Constructor');
+      expect(
+        constructors.find(
+          (n) =>
+            n.name === 'deinit' && n.properties.filePath === 'Sources/AvailableKit/Models.swift',
+        ),
+      ).toBeDefined();
+
+      const calls = getRelationships(result, 'CALLS');
+      const cleanupCall = calls.find(
+        (c) =>
+          c.source === 'deinit' &&
+          c.target === 'cleanup' &&
+          c.targetFilePath === 'Sources/AvailableKit/Models.swift',
+      );
+      expect(cleanupCall).toBeDefined();
+    });
+  },
+);
+
 // ---------------------------------------------------------------------------
 // SM-9/SM-10: lookupMethodByOwnerWithMRO + D0 fast path — Swift first-wins
 // ---------------------------------------------------------------------------
