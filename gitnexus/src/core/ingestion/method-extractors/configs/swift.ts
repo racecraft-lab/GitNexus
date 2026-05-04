@@ -283,7 +283,11 @@ export const swiftMethodConfig: MethodExtractionConfig = {
 
   // function_declaration for type methods, protocol_function_declaration for protocol methods,
   // and subscript_declaration for Swift subscript members.
-  methodNodeTypes: ['function_declaration', 'protocol_function_declaration', 'subscript_declaration'],
+  methodNodeTypes: [
+    'function_declaration',
+    'protocol_function_declaration',
+    'subscript_declaration',
+  ],
 
   bodyNodeTypes: ['class_body', 'protocol_body'],
 

@@ -21,14 +21,18 @@ function typeBinding(type: string): CaptureMatch {
 
 describe('Swift scope type normalization', () => {
   it('unwraps nested collection and optional wrappers with balanced generic parsing', () => {
-    expect(interpretSwiftTypeBinding(typeBinding('Array<Optional<User>>'))?.rawTypeName).toBe('User');
-    expect(interpretSwiftTypeBinding(typeBinding('[String: Optional<User>]'))?.rawTypeName).toBe('User');
+    expect(interpretSwiftTypeBinding(typeBinding('Array<Optional<User>>'))?.rawTypeName).toBe(
+      'User',
+    );
+    expect(interpretSwiftTypeBinding(typeBinding('[String: Optional<User>]'))?.rawTypeName).toBe(
+      'User',
+    );
   });
 
   it('unwraps Result by success type instead of the error argument', () => {
-    expect(interpretSwiftTypeBinding(typeBinding('Result<User, RepositoryError>'))?.rawTypeName).toBe(
-      'User',
-    );
+    expect(
+      interpretSwiftTypeBinding(typeBinding('Result<User, RepositoryError>'))?.rawTypeName,
+    ).toBe('User');
   });
 });
 

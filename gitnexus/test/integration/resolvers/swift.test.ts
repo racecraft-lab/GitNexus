@@ -989,13 +989,17 @@ describe.skipIf(!swiftAvailable || !swiftRegistryPrimary)(
     let result: PipelineResult;
 
     beforeAll(async () => {
-      result = await runPipelineFromRepo(path.join(FIXTURES, 'swift-package-custom-targets'), () => {});
+      result = await runPipelineFromRepo(
+        path.join(FIXTURES, 'swift-package-custom-targets'),
+        () => {},
+      );
     }, 60000);
 
     it('resolves an import from a custom executable target path to its custom library target path', () => {
       const calls = getRelationships(result, 'CALLS');
       const factoryCall = calls.find(
-        (c) => c.target === 'makeCoreService' && c.targetFilePath === 'Modules/Core/CoreService.swift',
+        (c) =>
+          c.target === 'makeCoreService' && c.targetFilePath === 'Modules/Core/CoreService.swift',
       );
       expect(factoryCall).toBeDefined();
     });
@@ -1022,7 +1026,9 @@ describe.skipIf(!swiftAvailable || !swiftRegistryPrimary)(
     it('exports public symbols to an importing target', () => {
       const calls = getRelationships(result, 'CALLS');
       expect(
-        calls.find((c) => c.target === 'publicHelper' && c.targetFilePath === 'Sources/Models/API.swift'),
+        calls.find(
+          (c) => c.target === 'publicHelper' && c.targetFilePath === 'Sources/Models/API.swift',
+        ),
       ).toBeDefined();
       expect(
         calls.find((c) => c.target === 'doWork' && c.targetFilePath === 'Sources/Models/API.swift'),
@@ -1046,7 +1052,9 @@ describe.skipIf(!swiftAvailable || !swiftRegistryPrimary)(
           c.targetFilePath === 'Sources/Models/API.swift',
       );
       expect(testInternalCall).toBeDefined();
-      expect(calls.find((c) => c.source === 'runTests' && c.target === 'secretHelper')).toBeUndefined();
+      expect(
+        calls.find((c) => c.source === 'runTests' && c.target === 'secretHelper'),
+      ).toBeUndefined();
     });
   },
 );
@@ -1095,7 +1103,9 @@ describe.skipIf(!swiftAvailable || !swiftRegistryPrimary)(
 
     it('keeps same-arity same-type overload declarations separate by external label', () => {
       const functions = getNodesByLabelFull(result, 'Function');
-      const finds = functions.filter((n) => n.name === 'find' && n.properties.filePath === 'Lookup.swift');
+      const finds = functions.filter(
+        (n) => n.name === 'find' && n.properties.filePath === 'Lookup.swift',
+      );
       expect(finds.length).toBe(2);
       expect(finds.map((n) => n.properties.parameterLabels).sort()).toEqual([['id'], ['name']]);
     });
@@ -1128,7 +1138,9 @@ describe.skipIf(!swiftAvailable || !swiftRegistryPrimary)(
 
     it('resolves named closure parameters from collection element type', () => {
       const calls = getRelationships(result, 'CALLS');
-      const namedClosureCall = calls.find((c) => c.source === 'processClosures' && c.target === 'save');
+      const namedClosureCall = calls.find(
+        (c) => c.source === 'processClosures' && c.target === 'save',
+      );
       expect(namedClosureCall).toBeDefined();
       expect(namedClosureCall!.targetFilePath).toBe('Models.swift');
     });

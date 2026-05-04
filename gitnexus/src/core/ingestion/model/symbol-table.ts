@@ -285,7 +285,9 @@ export const createSymbolTable = (): InternalSymbolTable => {
       ...(metadata?.declaredType !== undefined ? { declaredType: metadata.declaredType } : {}),
       ...(metadata?.ownerId !== undefined ? { ownerId: metadata.ownerId } : {}),
       ...(metadata?.visibility !== undefined ? { visibility: metadata.visibility } : {}),
-      ...(metadata?.declarationKind !== undefined ? { declarationKind: metadata.declarationKind } : {}),
+      ...(metadata?.declarationKind !== undefined
+        ? { declarationKind: metadata.declarationKind }
+        : {}),
     };
 
     // A. File Index — unconditional.

@@ -91,7 +91,9 @@ export function typeTagForId(
   // type (simplified by extractSimpleTypeName which strips generics).
   const types = currentInfo.parameters.map((p) => (p.rawType ?? p.type) as string);
   const labels = currentInfo.parameters.map((p) => p.label ?? '');
-  const groupUsesLabels = sameArityGroup.some((info) => info.parameters.some((p) => p.label != null));
+  const groupUsesLabels = sameArityGroup.some((info) =>
+    info.parameters.some((p) => p.label != null),
+  );
   if (groupUsesLabels) {
     return `~${types.map((type, i) => `${labels[i] ?? ''}:${type}`).join(',')}`;
   }

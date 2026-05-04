@@ -651,7 +651,11 @@ export function populateSwiftModuleSiblings(
         if (target === undefined) continue;
         addImplicitImportEdge(importMap, source.moduleScope, target);
 
-        addVisibleRefsToScope(augmentations, source.moduleScope, visibleRefsByFile.get(targetFile) ?? []);
+        addVisibleRefsToScope(
+          augmentations,
+          source.moduleScope,
+          visibleRefsByFile.get(targetFile) ?? [],
+        );
       }
     }
   }
@@ -1052,7 +1056,8 @@ function propertyNameNode(node: SyntaxNode): SyntaxNode | null {
 
 function typeLikeNameNode(node: SyntaxNode): SyntaxNode | null {
   const name = node.childForFieldName('name');
-  if (name === null) return firstDescendant(node, new Set(['type_identifier', 'simple_identifier']));
+  if (name === null)
+    return firstDescendant(node, new Set(['type_identifier', 'simple_identifier']));
   if (name.type === 'type_identifier') return name;
   return firstDescendant(name, new Set(['type_identifier', 'simple_identifier']));
 }

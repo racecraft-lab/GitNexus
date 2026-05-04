@@ -299,7 +299,12 @@ function extractSwiftTargetDependencies(body: string): string[] {
   return [...deps].sort();
 }
 
-function findBalancedClose(text: string, open: number, openChar: string, closeChar: string): number {
+function findBalancedClose(
+  text: string,
+  open: number,
+  openChar: string,
+  closeChar: string,
+): number {
   let depth = 0;
   let quote: '"' | "'" | null = null;
   let escaped = false;
@@ -329,7 +334,10 @@ function findBalancedClose(text: string, open: number, openChar: string, closeCh
 }
 
 function normalizeConfigPath(value: string): string {
-  return value.replace(/\\/g, '/').replace(/^\.\/+/, '').replace(/\/+$/, '');
+  return value
+    .replace(/\\/g, '/')
+    .replace(/^\.\/+/, '')
+    .replace(/\/+$/, '');
 }
 
 // ============================================================================
