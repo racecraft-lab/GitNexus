@@ -19,8 +19,10 @@ import {
 } from './helpers.js';
 import { isLanguageAvailable } from '../../../src/core/tree-sitter/parser-loader.js';
 import { SupportedLanguages } from '../../../src/config/supported-languages.js';
+import { isRegistryPrimary } from '../../../src/core/ingestion/registry-primary-flag.js';
 
 const swiftAvailable = isLanguageAvailable(SupportedLanguages.Swift);
+const swiftRegistryPrimary = isRegistryPrimary(SupportedLanguages.Swift);
 
 describe.skipIf(!swiftAvailable)('Swift constructor-inferred type resolution', () => {
   let result: PipelineResult;
@@ -484,6 +486,39 @@ describe.skipIf(!swiftAvailable)('Swift for-in loop element type inference', () 
   it('creates implicit import edges between files', () => {
     const imports = getRelationships(result, 'IMPORTS');
     expect(imports.length).toBeGreaterThan(0);
+  });
+
+  it('resolves user.save() from the inferred for-in element type', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const saveCall = calls.find(
+      (c) =>
+        c.target === 'save' && c.source === 'processAll' && c.targetFilePath === 'Models.swift',
+    );
+    expect(saveCall).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Swift 6.3 module selectors:
+// ModuleA::getValue() disambiguates which imported module owns the call.
+// tree-sitter-swift 0.7.1 still parses this syntax with an ERROR node, so
+// GitNexus must preserve the call through a compatibility capture.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!swiftAvailable || !swiftRegistryPrimary)('Swift module selector calls', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'swift-module-selectors'), () => {});
+  }, 60000);
+
+  it('resolves ModuleA::getValue() through the imported SwiftPM target', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const selectorCall = calls.find(
+      (c) => c.target === 'getValue' && c.targetFilePath === 'Sources/ModuleA/API.swift',
+    );
+    expect(selectorCall).toBeDefined();
+    expect(selectorCall!.source).toBe('run');
   });
 });
 

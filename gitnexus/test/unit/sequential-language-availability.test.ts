@@ -71,42 +71,62 @@ describe('sequential native parser availability', () => {
   });
 
   it('skips Swift files in processCalls when the native parser is unavailable', async () => {
+    const previousRegistry = process.env.REGISTRY_PRIMARY_SWIFT;
+    process.env.REGISTRY_PRIMARY_SWIFT = '0';
     vi.mocked(parserLoader.isLanguageAvailable).mockReturnValue(false);
 
-    await expect(
-      processCalls(
-        createKnowledgeGraph(),
-        [{ path: 'App.swift', content: 'func demo() {}' }],
-        createASTCache(),
-        createResolutionContext(),
-      ),
-    ).resolves.toEqual([]);
+    try {
+      await expect(
+        processCalls(
+          createKnowledgeGraph(),
+          [{ path: 'App.swift', content: 'func demo() {}' }],
+          createASTCache(),
+          createResolutionContext(),
+        ),
+      ).resolves.toEqual([]);
 
-    expect(parserLoader.loadLanguage).not.toHaveBeenCalled();
+      expect(parserLoader.loadLanguage).not.toHaveBeenCalled();
+    } finally {
+      if (previousRegistry === undefined) {
+        delete process.env.REGISTRY_PRIMARY_SWIFT;
+      } else {
+        process.env.REGISTRY_PRIMARY_SWIFT = previousRegistry;
+      }
+    }
   });
 
   it('warns when processCalls skips files in verbose mode', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const previous = process.env.GITNEXUS_VERBOSE;
+    const previousRegistry = process.env.REGISTRY_PRIMARY_SWIFT;
     process.env.GITNEXUS_VERBOSE = '1';
+    process.env.REGISTRY_PRIMARY_SWIFT = '0';
     vi.mocked(parserLoader.isLanguageAvailable).mockReturnValue(false);
 
-    await processCalls(
-      createKnowledgeGraph(),
-      [{ path: 'App.swift', content: 'func demo() {}' }],
-      createASTCache(),
-      createResolutionContext(),
-    );
+    try {
+      await processCalls(
+        createKnowledgeGraph(),
+        [{ path: 'App.swift', content: 'func demo() {}' }],
+        createASTCache(),
+        createResolutionContext(),
+      );
 
-    expect(warnSpy).toHaveBeenCalledWith(
-      '[ingestion] Skipped 1 swift file(s) in call processing — swift parser not available.',
-    );
+      expect(warnSpy).toHaveBeenCalledWith(
+        '[ingestion] Skipped 1 swift file(s) in call processing — swift parser not available.',
+      );
+    } finally {
+      warnSpy.mockRestore();
+      if (previous === undefined) {
+        delete process.env.GITNEXUS_VERBOSE;
+      } else {
+        process.env.GITNEXUS_VERBOSE = previous;
+      }
 
-    warnSpy.mockRestore();
-    if (previous === undefined) {
-      delete process.env.GITNEXUS_VERBOSE;
-    } else {
-      process.env.GITNEXUS_VERBOSE = previous;
+      if (previousRegistry === undefined) {
+        delete process.env.REGISTRY_PRIMARY_SWIFT;
+      } else {
+        process.env.REGISTRY_PRIMARY_SWIFT = previousRegistry;
+      }
     }
   });
 

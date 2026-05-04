@@ -333,6 +333,8 @@ CI auto-discovers the set via `tsx`. No workflow edit required.
 | `languages/python/captures.ts` | `emitPythonScopeCaptures` (honors cross-phase Tree cache) |
 | `languages/csharp/index.ts` | C# `ScopeResolver` hooks + known-limitation docs |
 | `languages/csharp/captures.ts` | `emitCsharpScopeCaptures` (honors cross-phase Tree cache) |
+| `languages/swift/scope-resolver.ts` | Swift `ScopeResolver` wiring for registry-primary call resolution |
+| `languages/swift/scope.ts` | Swift scope captures, import/type-binding hooks, same-target visibility, Swift 6.3 module selector compatibility |
 | `languages/csharp/namespace-siblings.ts` | Cross-file implicit-namespace visibility hook (reads `treeCache`) |
 
 ### Performance notes
