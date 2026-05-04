@@ -26,7 +26,6 @@ import {
   simpleKey,
   type GraphNodeLookup,
 } from '../graph-bridge/node-lookup.js';
-
 /**
  * Labels that may legitimately ANCHOR a CALLS/ACCESSES edge as the
  * source ("caller"). A Variable / Property can be the TARGET of an

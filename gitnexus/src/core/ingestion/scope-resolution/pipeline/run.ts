@@ -90,6 +90,14 @@ export function runScopeResolution(
   const onWarn = input.onWarn ?? (() => {});
   const PROF = process.env.PROF_SCOPE_RESOLUTION === '1';
   const tStart = PROF ? process.hrtime.bigint() : 0n;
+  let fileContents: Map<string, string> | undefined;
+  const getFileContents = (): Map<string, string> => {
+    if (fileContents === undefined) {
+      fileContents = new Map<string, string>();
+      for (const f of files) fileContents.set(f.path, f.content);
+    }
+    return fileContents;
+  };
 
   // ── Phase 1: extract each file → ParsedFile ────────────────────────────
   const parsedFiles: ParsedFile[] = [];
@@ -110,8 +118,8 @@ export function runScopeResolution(
     }
     parsedFiles.push(parsed);
   }
-
   for (const parsed of parsedFiles) provider.populateOwners(parsed, parsedFiles);
+  provider.populateWorkspaceOwners?.(parsedFiles, { fileContents: getFileContents() });
 
   // Reconcile scope-resolution's ownership view into the SemanticModel.
   // See `reconcile-ownership.ts` for the full rationale (Contract
@@ -150,6 +158,8 @@ export function runScopeResolution(
     hooks: {
       resolveImportTarget: (targetRaw, fromFile) =>
         provider.resolveImportTarget(targetRaw, fromFile, allFilePaths, resolutionConfig),
+      expandsWildcardTo: (targetModuleScope) =>
+        provider.expandsWildcardTo?.(targetModuleScope, parsedFiles) ?? [],
       mergeBindings: (existing, incoming, scopeId) =>
         provider.mergeBindings(existing, incoming, scopeId),
     },
@@ -179,16 +189,21 @@ export function runScopeResolution(
   // The hook writes to `bindingAugmentations` only; finalized
   // `indexes.bindings` remains immutable post-finalize (I8).
   if (provider.populateNamespaceSiblings !== undefined) {
-    const fileContents = new Map<string, string>();
-    for (const f of files) fileContents.set(f.path, f.content);
     provider.populateNamespaceSiblings(parsedFiles, indexes, {
-      fileContents,
+      fileContents: getFileContents(),
       resolutionConfig,
       treeCache,
     });
   }
 
   const tFinalize = PROF ? process.hrtime.bigint() : 0n;
+
+  // Cross-package namespace typeBinding mirroring. Runs before
+  // propagateImportedReturnTypes so the SCC-ordered pass sees the
+  // mirrored bindings.
+  if (provider.mirrorNamespaceTypeBindings !== undefined) {
+    provider.mirrorNamespaceTypeBindings(parsedFiles, indexes, workspaceIndex);
+  }
 
   // Cross-file return-type propagation (Contract Invariant I3 timing:
   // after finalize, before resolve). Split-timed separately so the
@@ -197,6 +212,13 @@ export function runScopeResolution(
   // here, not in finalize).
   if (provider.propagatesReturnTypesAcrossImports !== false) {
     propagateImportedReturnTypes(parsedFiles, indexes, workspaceIndex);
+  }
+
+  if (provider.populateRangeBindings !== undefined) {
+    provider.populateRangeBindings(parsedFiles, indexes, {
+      fileContents: getFileContents(),
+      treeCache,
+    });
   }
   const tPropagate = PROF ? process.hrtime.bigint() : 0n;
 
@@ -239,6 +261,7 @@ export function runScopeResolution(
     handledSites,
     readonlyModel,
     workspaceIndex,
+    { allowGlobalFallback: provider.allowGlobalFreeCallFallback === true },
   );
   const { emitted, skipped } = emitReferencesViaLookup(
     graph,

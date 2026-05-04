@@ -544,6 +544,8 @@ function buildDefFromDeclarationMatch(
   const parameterLabels = parseJsonStringArrayCapture(match['@declaration.parameter-labels']);
   const visibility = match['@declaration.visibility']?.text;
   const declarationKind = match['@declaration.kind']?.text;
+  const declaredType = match['@declaration.field-type']?.text;
+  const returnType = match['@declaration.return-type']?.text;
 
   return {
     nodeId: makeDefId(filePath, anchor.range, type, nameCap.text),
@@ -556,6 +558,8 @@ function buildDefFromDeclarationMatch(
     ...(parameterLabels !== undefined ? { parameterLabels } : {}),
     ...(visibility !== undefined ? { visibility } : {}),
     ...(declarationKind !== undefined ? { declarationKind } : {}),
+    ...(declaredType !== undefined ? { declaredType } : {}),
+    ...(returnType !== undefined ? { returnType } : {}),
   };
 }
 
