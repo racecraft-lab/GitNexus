@@ -304,7 +304,9 @@ describe('CLI end-to-end', () => {
       ).toBe(0);
       expect(`${second.stdout}${second.stderr}`).toMatch(/Already up to date/i);
 
-      const entries = JSON.parse(fs.readFileSync(path.join(gnHome, 'registry.json'), 'utf-8')) as Array<{
+      const entries = JSON.parse(
+        fs.readFileSync(path.join(gnHome, 'registry.json'), 'utf-8'),
+      ) as Array<{
         path: string;
       }>;
       const matchesRepo = entries.some((e) => {

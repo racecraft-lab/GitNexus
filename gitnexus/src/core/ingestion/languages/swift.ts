@@ -16,6 +16,7 @@ import type { NodeLabel, SymbolDefinition } from 'gitnexus-shared';
 import { createClassExtractor } from '../class-extractors/generic.js';
 import { swiftClassConfig } from '../class-extractors/configs/swift.js';
 import { defineLanguage } from '../language-provider.js';
+import type { AstFrameworkPatternConfig } from '../language-provider.js';
 import { typeConfig as swiftConfig } from '../type-extractors/swift.js';
 import { swiftExportChecker } from '../export-detection.js';
 import { createImportResolver } from '../import-resolvers/resolver-factory.js';
@@ -130,17 +131,12 @@ const swiftImportIdentifierParts = (importNode: SyntaxNode): string[] => {
     .filter(Boolean);
 };
 
-export const swiftImportPathPreprocessor = (
-  cleaned: string,
-  importNode: SyntaxNode,
-): string => {
+export const swiftImportPathPreprocessor = (cleaned: string, importNode: SyntaxNode): string => {
   const identifierParts = swiftImportIdentifierParts(importNode);
   return identifierParts.length > 0 ? identifierParts.join('.') : cleaned;
 };
 
-export const extractSwiftNamedBindings = (
-  importNode: SyntaxNode,
-): NamedBinding[] | undefined => {
+export const extractSwiftNamedBindings = (importNode: SyntaxNode): NamedBinding[] | undefined => {
   const identifierParts = swiftImportIdentifierParts(importNode);
   if (identifierParts.length < 2) return undefined;
   const importedName = identifierParts[identifierParts.length - 1];
@@ -287,6 +283,60 @@ const BUILT_INS: ReadonlySet<string> = new Set([
 export const swiftProvider = defineLanguage({
   id: SupportedLanguages.Swift,
   extensions: ['.swift'],
+  entryPointPatterns: [
+    /^viewDidLoad$/,
+    /^viewWillAppear$/,
+    /^viewDidAppear$/,
+    /^viewWillDisappear$/,
+    /^viewDidDisappear$/,
+    /^application\(/,
+    /^scene\(/,
+    /^body$/,
+    /Coordinator$/,
+    /^sceneDidBecomeActive$/,
+    /^sceneWillResignActive$/,
+    /^didFinishLaunchingWithOptions$/,
+    /ViewController$/,
+    /^configure[A-Z]/,
+    /^setup[A-Z]/,
+    /^makeBody$/,
+  ],
+  astFrameworkPatterns: [
+    {
+      framework: 'uikit',
+      entryPointMultiplier: 2.5,
+      reason: 'uikit-lifecycle',
+      patterns: [
+        'viewDidLoad',
+        'viewWillAppear',
+        'viewDidAppear',
+        'UIViewController',
+        '@IBOutlet',
+        '@IBAction',
+        '@objc',
+      ],
+    },
+    {
+      framework: 'swiftui',
+      entryPointMultiplier: 2.8,
+      reason: 'swiftui-pattern',
+      patterns: [
+        '@main',
+        'WindowGroup',
+        'ContentView',
+        '@StateObject',
+        '@ObservedObject',
+        '@EnvironmentObject',
+        '@Published',
+      ],
+    },
+    {
+      framework: 'vapor',
+      entryPointMultiplier: 3.0,
+      reason: 'vapor-routing',
+      patterns: ['app.get', 'app.post', 'req.content.decode', 'Vapor'],
+    },
+  ] satisfies AstFrameworkPatternConfig[],
   treeSitterQueries: SWIFT_QUERIES,
   typeConfig: swiftConfig,
   exportChecker: swiftExportChecker,

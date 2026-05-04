@@ -22,11 +22,7 @@ interface HttpConfig {
   httpConcurrency: number;
 }
 
-const parsePositiveInt = (
-  name: string,
-  value: string | undefined,
-  fallback: number,
-): number => {
+const parsePositiveInt = (name: string, value: string | undefined, fallback: number): number => {
   if (value === undefined) return fallback;
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) {

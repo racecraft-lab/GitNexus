@@ -81,9 +81,9 @@ describe('run-analyze module', () => {
         fs.readFile(path.join(tmpRepo.dbPath, '.gitnexus', '.gitignore'), 'utf-8'),
       ).resolves.toBe('*\n');
       const registry = await readRegistry();
-      expect(registry.some((entry) => path.resolve(entry.path) === path.resolve(tmpRepo.dbPath))).toBe(
-        true,
-      );
+      expect(
+        registry.some((entry) => path.resolve(entry.path) === path.resolve(tmpRepo.dbPath)),
+      ).toBe(true);
     } finally {
       if (savedGitnexusHome === undefined) delete process.env.GITNEXUS_HOME;
       else process.env.GITNEXUS_HOME = savedGitnexusHome;

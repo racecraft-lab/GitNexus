@@ -32,7 +32,7 @@ import {
   cleanupOldKuzuFiles,
   type RepoMeta,
 } from '../storage/repo-manager.js';
-import { getCurrentCommit, getRemoteUrl, hasGitDir, getInferredRepoName } from '../storage/git.js';
+import { getCurrentCommit, getRemoteUrl, hasGitDir } from '../storage/git.js';
 import type { CachedEmbedding } from './embeddings/types.js';
 import { generateAIContextFiles } from '../cli/ai-context.js';
 import { EMBEDDING_TABLE_NAME } from './lbug/schema.js';
@@ -449,15 +449,21 @@ export async function runFullAnalysis(
           reindexPaths: incrementalPlan.reindexPaths,
         }
       : undefined;
-  const pipelineResult = await runPipelineFromRepo(repoPath, (p) => {
-    const phaseLabel = PHASE_LABELS[p.phase] || p.phase;
-    const scaled = scalePipelineProgress(p.phase, p.percent);
-    const message = p.detail ? `${p.message || phaseLabel} (${p.detail})` : p.message || phaseLabel;
-    progress(p.phase, scaled, message);
-  }, {
-    ...(clusterEnrichment ? { clusterEnrichment } : {}),
-    ...(incrementalPipelineOptions ?? {}),
-  });
+  const pipelineResult = await runPipelineFromRepo(
+    repoPath,
+    (p) => {
+      const phaseLabel = PHASE_LABELS[p.phase] || p.phase;
+      const scaled = scalePipelineProgress(p.phase, p.percent);
+      const message = p.detail
+        ? `${p.message || phaseLabel} (${p.detail})`
+        : p.message || phaseLabel;
+      progress(p.phase, scaled, message);
+    },
+    {
+      ...(clusterEnrichment ? { clusterEnrichment } : {}),
+      ...(incrementalPipelineOptions ?? {}),
+    },
+  );
 
   // ── Phase 2: LadybugDB (60–85%) ──────────────────────────────────
   progress('lbug', 60, 'Loading into LadybugDB...');

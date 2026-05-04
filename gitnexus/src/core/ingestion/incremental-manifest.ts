@@ -68,7 +68,8 @@ export interface IncrementalPlan {
   deletedPaths: string[];
 }
 
-const sha1 = (input: string | Buffer): string => crypto.createHash('sha1').update(input).digest('hex');
+const sha1 = (input: string | Buffer): string =>
+  crypto.createHash('sha1').update(input).digest('hex');
 
 export const isConfigPath = (filePath: string): boolean => {
   const normalized = filePath.replace(/\\/g, '/');

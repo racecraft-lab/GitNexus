@@ -35,9 +35,7 @@ const capturedSwiftAnnotationNames = (code: string): string[] => {
   const query = new Parser.Query(Swift as Parser.Language, SWIFT_QUERIES);
   return query
     .matches(tree.rootNode)
-    .filter((match) =>
-      match.captures.some((capture) => capture.name === 'definition.annotation'),
-    )
+    .filter((match) => match.captures.some((capture) => capture.name === 'definition.annotation'))
     .flatMap((match) =>
       match.captures
         .filter((capture) => capture.name === 'name')

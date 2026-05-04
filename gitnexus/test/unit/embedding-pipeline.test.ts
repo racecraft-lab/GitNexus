@@ -285,17 +285,19 @@ describe('runEmbeddingPipeline incremental filter', () => {
   it('reports in-flight embedding progress before an outer node batch completes', async () => {
     vi.doMock('../../src/core/embeddings/embedder.js', () => ({
       initEmbedder: vi.fn().mockResolvedValue(undefined),
-      embedBatch: vi.fn().mockImplementation(
-        async (
-          texts: string[],
-          onProgress?: (completedTexts: number, totalTexts: number) => void,
-        ) => {
-          for (let i = 1; i <= texts.length; i++) {
-            onProgress?.(i, texts.length);
-          }
-          return texts.map(() => new Float32Array(384));
-        },
-      ),
+      embedBatch: vi
+        .fn()
+        .mockImplementation(
+          async (
+            texts: string[],
+            onProgress?: (completedTexts: number, totalTexts: number) => void,
+          ) => {
+            for (let i = 1; i <= texts.length; i++) {
+              onProgress?.(i, texts.length);
+            }
+            return texts.map(() => new Float32Array(384));
+          },
+        ),
       embedText: vi.fn().mockResolvedValue(new Float32Array(384)),
       embeddingToArray: vi.fn().mockImplementation((emb: Float32Array) => Array.from(emb)),
       isEmbedderReady: vi.fn().mockReturnValue(true),

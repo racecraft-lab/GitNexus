@@ -147,7 +147,10 @@ describe('incremental planning', () => {
     const storagePath = path.join(repoPath, '.gitnexus');
     await fs.mkdir(path.join(repoPath, 'src'), { recursive: true });
     await fs.mkdir(storagePath, { recursive: true });
-    await fs.writeFile(path.join(repoPath, 'src/top.ts'), "import './base';\nexport const top = 1;\n");
+    await fs.writeFile(
+      path.join(repoPath, 'src/top.ts'),
+      "import './base';\nexport const top = 1;\n",
+    );
 
     const emptyConfigFingerprint = 'da39a3ee5e6b4b0d3255bfef95601890afd80709';
     const previous: IncrementalManifest = {
