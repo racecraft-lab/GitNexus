@@ -215,7 +215,7 @@ Both hooks are optional on `LanguageProvider`. Ruby is the only current implemen
 The Call-Resolution DAG is the **legacy path**. RFC #909 Ring 3 introduces a parallel **scope-resolution pipeline** (next section) that replaces stages 1–6 with a scope-indexed registry lookup. Both paths ship side-by-side and are gated per-language via `MIGRATED_LANGUAGES` + the `REGISTRY_PRIMARY_<LANG>` env var.
 
 - **Unmigrated language** → Call-Resolution DAG runs; scope-resolution phase is a no-op.
-- **Migrated language** (currently: Python, C#) → scope-resolution owns CALLS/ACCESSES/USES emission; the legacy DAG gates off for that language via `isRegistryPrimary(lang)` checks in `call-processor.ts` and `import-processor.ts`.
+- **Migrated language** (currently: Python, C#, TypeScript, Swift) → scope-resolution owns CALLS/ACCESSES/USES emission; the legacy DAG gates off for that language via `isRegistryPrimary(lang)` checks in `call-processor.ts` and `import-processor.ts`.
 - `import-processor` still populates `importMap` for migrated languages — heritage's `ctx.resolve` reads it to disambiguate parent classes. Only edge emission is gated.
 - CI runs BOTH paths for every migrated language on every PR (`.github/workflows/ci-scope-parity.yml`); both must pass.
 
@@ -331,10 +331,13 @@ CI auto-discovers the set via `tsx`. No workflow edit required.
 | `registry-primary-flag.ts` | `MIGRATED_LANGUAGES` set + `isRegistryPrimary(lang)` |
 | `languages/python/index.ts` | Python `ScopeResolver` hooks + known-limitation docs |
 | `languages/python/captures.ts` | `emitPythonScopeCaptures` (honors cross-phase Tree cache) |
+| `languages/typescript/index.ts` | TypeScript `ScopeResolver` hooks + known-limitation docs |
+| `languages/typescript/captures.ts` | `emitTsScopeCaptures` (honors cross-phase Tree cache) |
 | `languages/csharp/index.ts` | C# `ScopeResolver` hooks + known-limitation docs |
 | `languages/csharp/captures.ts` | `emitCsharpScopeCaptures` (honors cross-phase Tree cache) |
+| `languages/swift/index.ts` | Swift `ScopeResolver` hooks + known-limitation docs |
 | `languages/swift/scope-resolver.ts` | Swift `ScopeResolver` wiring for registry-primary call resolution |
-| `languages/swift/scope.ts` | Swift scope captures, import/type-binding hooks, same-target visibility, Swift 6.3 module selector compatibility |
+| `languages/swift/scope.ts` | Swift scope captures, import/type-binding hooks, same-target visibility, `@testable` / `@_exported` imports, field reads/writes, and Swift 6.3 module selector compatibility |
 | `languages/csharp/namespace-siblings.ts` | Cross-file implicit-namespace visibility hook (reads `treeCache`) |
 
 ### Performance notes

@@ -23,6 +23,7 @@ import {
   parseSwiftPackageManifest,
   type SwiftPackageConfig,
 } from '../../language-config.js';
+import { lookupBindingsAt, namesAtScope } from '../../scope-resolution/scope/walkers.js';
 
 let swiftParser: Parser | null = null;
 
@@ -338,6 +339,26 @@ function emitTypeBindingCaptures(node: SyntaxNode, out: CaptureMatch[]): void {
 }
 
 function emitReferenceCaptures(node: SyntaxNode, out: CaptureMatch[]): void {
+  if (node.type === 'assignment') {
+    const target = node.childForFieldName('target');
+    const nav = firstDescendant(target, new Set(['navigation_expression']));
+    if (nav !== null) {
+      const parts = navigationParts(nav);
+      if (parts !== null) {
+        out.push({
+          '@reference.write.member': nodeToCapture('@reference.write.member', node),
+          '@reference.name': syntheticCapture('@reference.name', parts.nameNode, parts.member),
+          '@reference.receiver': syntheticCapture(
+            '@reference.receiver',
+            parts.receiverNode,
+            parts.receiverText,
+          ),
+        });
+      }
+    }
+    return;
+  }
+
   if (node.type === 'call_expression') {
     const callee = firstCallCallee(node);
     if (callee === null) return;
@@ -595,6 +616,7 @@ export function populateSwiftModuleSiblings(
   const augmentations = indexes.bindingAugmentations as Map<ScopeId, Map<string, BindingRef[]>>;
   const importMap = indexes.imports as Map<ScopeId, ImportEdge[]>;
   const groupByFile = new Map<string, string>();
+  const allSwiftFiles = new Set(parsedFiles.map((p) => p.filePath));
   for (const [groupName, files] of groups) {
     for (const file of files) groupByFile.set(file, groupName);
   }
@@ -634,6 +656,30 @@ export function populateSwiftModuleSiblings(
     }
   }
 
+  for (let iteration = 0; iteration < Math.max(1, parsedFiles.length); iteration++) {
+    let added = 0;
+    for (const source of parsedFiles) {
+      for (const moduleName of swiftExportedImportModules(source, ctx?.fileContents)) {
+        const targetFile = resolveSwiftImportTarget(
+          moduleName,
+          source.filePath,
+          allSwiftFiles,
+          ctx?.resolutionConfig,
+        );
+        if (targetFile === null) continue;
+        const targetGroupName = groupByFile.get(targetFile);
+        if (targetGroupName === undefined) continue;
+        const targetGroup = groups.get(targetGroupName) ?? [];
+        for (const filePath of targetGroup) {
+          if (filePath === source.filePath) continue;
+          const refs = visibleImportRefsForFile(parsedByPath.get(filePath), indexes, false);
+          added += addVisibleRefsToScope(augmentations, source.moduleScope, refs, 'reexport');
+        }
+      }
+    }
+    if (added === 0) break;
+  }
+
   for (const source of parsedFiles) {
     const imports = importMap.get(source.moduleScope) ?? [];
     for (const edge of imports) {
@@ -644,7 +690,7 @@ export function populateSwiftModuleSiblings(
       const testable = isTestableImport(source, edge.localName, ctx?.fileContents);
       for (const targetFile of targetGroup) {
         if (targetFile === source.filePath) continue;
-        const refs = visibleImportRefsForFile(parsedByPath.get(targetFile), testable);
+        const refs = visibleImportRefsForFile(parsedByPath.get(targetFile), indexes, testable);
         addVisibleRefsToScope(augmentations, source.moduleScope, refs);
       }
     }
@@ -830,6 +876,7 @@ function addArgumentLabels(
 
 function inferTypeFromExpression(expr: SyntaxNode): string | null {
   const unwrapped = unwrapEffectExpression(expr);
+  if (unwrapped.type === 'simple_identifier') return unwrapped.text;
   if (unwrapped.type !== 'call_expression') return null;
   const callee = firstCallCallee(unwrapped);
   if (callee === null) return null;
@@ -871,11 +918,23 @@ function navigationParts(node: SyntaxNode): {
 }
 
 function isMemberRead(node: SyntaxNode): boolean {
+  if (isSwiftAssignmentTarget(node)) return false;
   const parent = node.parent;
   if (parent === null) return false;
   if (parent.type === 'navigation_expression') return true;
   if (parent.type === 'call_expression' && firstCallCallee(parent)?.id === node.id) return false;
   return parent.type !== 'call_expression';
+}
+
+function isSwiftAssignmentTarget(node: SyntaxNode): boolean {
+  let cur: SyntaxNode | null = node;
+  while (cur !== null) {
+    const parent = cur.parent;
+    if (parent === null) return false;
+    if (parent.type === 'assignment') return parent.childForFieldName('target')?.id === cur.id;
+    cur = parent;
+  }
+  return false;
 }
 
 function firstCallCallee(node: SyntaxNode): SyntaxNode | null {
@@ -1313,18 +1372,36 @@ function isSwiftVisibleDefType(def: SymbolDefinition): boolean {
   );
 }
 
-function visibleImportRefsForFile(parsed: ParsedFile | undefined, testable: boolean): BindingRef[] {
+function visibleImportRefsForFile(
+  parsed: ParsedFile | undefined,
+  indexes: ScopeResolutionIndexes,
+  testable: boolean,
+): BindingRef[] {
   if (parsed === undefined) return [];
   const moduleScope = parsed.scopes.find((s) => s.id === parsed.moduleScope);
   if (moduleScope === undefined) return [];
   const refs: BindingRef[] = [];
+  const seen = new Set<string>();
   for (const [, bindings] of moduleScope.bindings) {
     for (const ref of bindings) {
       if (ref.origin !== 'local') continue;
       if (!isSwiftImportVisibleDef(ref.def, testable)) continue;
+      if (seen.has(ref.def.nodeId)) continue;
+      seen.add(ref.def.nodeId);
       refs.push(ref);
     }
   }
+
+  for (const name of namesAtScope(moduleScope.id, indexes)) {
+    for (const ref of lookupBindingsAt(moduleScope.id, name, indexes)) {
+      if (ref.origin !== 'wildcard' && ref.origin !== 'reexport') continue;
+      if (!isSwiftImportVisibleDef(ref.def, false)) continue;
+      if (seen.has(ref.def.nodeId)) continue;
+      seen.add(ref.def.nodeId);
+      refs.push(ref);
+    }
+  }
+
   sortBindingRefs(refs);
   return refs;
 }
@@ -1333,15 +1410,19 @@ function addVisibleRefsToScope(
   augmentations: Map<ScopeId, Map<string, BindingRef[]>>,
   scopeId: ScopeId,
   refs: readonly BindingRef[],
-): void {
+  origin: BindingRef['origin'] = 'import',
+): number {
+  let added = 0;
   for (const ref of refs) {
     const name = simpleDefName(ref.def);
     if (name === null) continue;
     const bucket = getAugmentationBucket(augmentations, scopeId, name);
     if (bucket.some((b) => b.def.nodeId === ref.def.nodeId)) continue;
-    bucket.push({ def: ref.def, origin: 'import' });
+    bucket.push({ def: ref.def, origin });
     sortBindingRefs(bucket);
+    added++;
   }
+  return added;
 }
 
 function isTestableImport(
@@ -1353,6 +1434,21 @@ function isTestableImport(
   if (content === undefined) return false;
   const escaped = moduleName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`@testable\\s+import\\s+${escaped}\\b`).test(content);
+}
+
+function swiftExportedImportModules(
+  source: ParsedFile,
+  fileContents: ReadonlyMap<string, string> | undefined,
+): readonly string[] {
+  const content = fileContents?.get(source.filePath);
+  if (content === undefined) return [];
+  const modules: string[] = [];
+  const re = /@_exported\s+import\s+([A-Za-z_][A-Za-z0-9_.]*)/g;
+  for (const match of content.matchAll(re)) {
+    const moduleName = match[1];
+    if (moduleName !== undefined) modules.push(moduleName);
+  }
+  return modules;
 }
 
 function sortBindingRefs(refs: BindingRef[]): void {

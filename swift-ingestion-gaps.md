@@ -1,80 +1,57 @@
-# Swift Ingestion Gaps
+# Swift Language Support Audit
 
-Tracks missing Swift features in the GitNexus ingestion pipeline. Organized by priority.
+Last updated: 2026-05-04
 
-## 🔴 High Priority
+This file records the Swift support comparison against the registry-primary
+Python and TypeScript paths. Swift is now first-class in the same sense as those
+languages: the resolver is registry-primary by default, has parity coverage for
+the common static-resolution surface, and documents the remaining limits as
+explicit trade-offs instead of silent unknowns.
 
-### Type Inference
+## First-Class Support Surface
 
-| Gap | Description | Impact |
-|-----|-------------|--------|
-| `if let` / `guard let` inside for-loop bodies | Type-env binds the variable correctly but call-processor's re-parse path doesn't propagate for-loop element bindings to receiver resolution | Calls inside `for item in collection` are unresolved |
-| `while let` binding | `while let x = iter.next()` not in `DECLARATION_NODE_TYPES` | Uncommon but valid Swift pattern |
+| Area | Swift support |
+|------|---------------|
+| Registry path | `SupportedLanguages.Swift` is in `MIGRATED_LANGUAGES`; scope-resolution owns `CALLS`, `ACCESSES`, and `USES` emission. |
+| Module/import resolution | Same-target implicit visibility, SwiftPM target dependencies/custom target paths, module selectors, `@testable import`, and `@_exported import` barrels. |
+| Receiver inference | Explicit annotations, constructors, function return types, direct call-result chains, multi-hop assignment aliases, `self`, `super`, optional chaining, `if let` / `guard let`, `await` / `try`, for-in element types, named closure parameters, and `$0` shorthand closures. |
+| Dispatch | Same-file and cross-file functions, inherited members, protocol/abstract dispatch, overload disambiguation by external labels, trailing closure arity, extension-member merge, and Swift 6.3 module selector calls. |
+| Symbols | Classes, structs, enums, protocols, actors, extensions, methods, fields, associated types, subscripts, attributes, property wrappers, static/class methods, visibility, async/final/override metadata. |
+| Graph edges | `CALLS`, `USES`, `ACCESSES` reads, `ACCESSES` writes, `EXTENDS`, `IMPLEMENTS`, and `METHOD_IMPLEMENTS` edges for the covered static surface. |
 
-### Call Resolution
+## Closed Gaps
 
-| Gap | Description | Impact |
-|-----|-------------|--------|
-| `await expr` / `try expr` as call wrappers | `await_expression` and `try_expression` wrap `call_expression` — call extraction queries match but the outer wrapper can interfere with receiver resolution in some paths | Most cases work via `unwrapSwiftExpression` but edge cases remain |
-| Multi-hop chains | `a.b.c()` — only single-hop `receiver.method()` resolved | Common in UIKit/SwiftUI code |
-| Trailing closures | `items.map { $0.save() }` — `$0` type not inferrable | Functional-style Swift code |
+| Gap | Resolution | Evidence |
+|-----|------------|----------|
+| Assignment aliases | `inferTypeFromExpression` now captures identifier RHS aliases, allowing chain-following to collapse `let second = alias` to the terminal receiver type. | `swift-assignment-nullable-write` fixture and resolver tests. |
+| Field writes | Swift assignments now emit `@reference.write.member` captures and suppress false read edges on assignment targets. | `emits write ACCESSES edges for Swift field assignments`. |
+| `@_exported import` barrels | `populateSwiftModuleSiblings` now propagates visible re-exported bindings through SwiftPM target barrels. | `swift-exported-import` fixture and resolver tests. |
+| Optional/direct call-result chains | Covered together with alias regressions to prevent backsliding on `maybeUser?.save()` and `makeUser().save()`. | `Swift assignment aliases, optional chaining, and writes`. |
+| `super.member()` dispatch | Covered in the alias/write fixture to keep inherited Swift member dispatch aligned with Python/TypeScript parent-resolution coverage. | `resolves super.member() to inherited Swift members`. |
 
-## 🟡 Medium Priority
+## Remaining Documented Limits
 
-### Symbol Extraction
+These are not unique Swift defects relative to Python/TypeScript support. They
+are the Swift equivalents of the documented dynamic and advanced type-flow
+limits in `languages/python/index.ts` and `languages/typescript/index.ts`.
 
-| Gap | Description | Impact |
-|-----|-------------|--------|
-| Enum `case` as callable | `MyEnum.case` calls are member-form, not caught by constructor fallback | Enum-heavy code (Result, State enums) |
-| Subscript declarations | `subscript(i:) -> T` not captured | Protocol conformance tracking |
-| Operator overloads | `static func + (lhs:, rhs:)` not captured | Mathematical types |
-| `deinit` | `deinit {}` not captured | Minor — rarely called explicitly |
-| Macro declarations | `@macro` / `#macro` (Swift 5.9+) not captured | Swift macro ecosystem is growing |
+| Gap | Current behavior | Impact |
+|-----|------------------|--------|
+| Macro/build-plugin generated declarations | Source is indexed as parsed; generated declarations are not expanded. | Calls to macro-generated members may remain unresolved. |
+| Objective-C/dynamic runtime dispatch | Selectors, KVC/KVO, reflection, and `@dynamicMemberLookup` are not followed. | Runtime-only call targets remain unresolved, as with Python/TS dynamic access. |
+| Conditional compilation | `#if canImport(...)` and platform guards are not evaluated per target. | Inactive branches may still be parsed structurally; active-platform precision is out of scope. |
+| Advanced generic constraints | Conditional conformance, `where` clauses, protocol-composition aliases, and associated-type equality constraints are indexed structurally but not expanded into alternate dispatch branches. | Highly generic APIs can miss precise protocol/implementation edges. |
+| Pattern-heavy type flow | Tuple destructuring, `switch`/`case` pattern bindings, and `while let` iterator bindings do not propagate receiver types. | Calls through those local bindings can remain unresolved. |
+| Nonstandard callable declarations | Operator overloads, enum case constructor calls, and `deinit` are not first-class call targets in the scope resolver. | Specialized Swift syntax may be indexed as symbols without full call edges. |
 
-### Heritage / Inheritance
+## Verification Corpus
 
-| Gap | Description | Impact |
-|-----|-------------|--------|
-| Multiple inheritance specifiers | `class Foo: Bar, P1, P2` — only first specifier captured | Missing protocol conformance edges |
-| Generic constraints | `class Foo<T: Equatable>` — bounds not tracked | Advanced generics |
-| Conditional conformance | `extension Array: P where Element: Q` — `where` clause not processed | Cross-platform code |
-| Protocol composition | `typealias Codable = Encodable & Decodable` — not expanded | Type alias resolution |
-
-### Export / Visibility
-
-| Gap | Description | Impact |
-|-----|-------------|--------|
-| Nested function declarations | Inner `func` marked as exported — should be private | Conservative resolution still correct (over-exports) |
-
-### Module / Import
-
-| Gap | Description | Impact |
-|-----|-------------|--------|
-| `@testable import` | Test target imports treated as opaque | Test file cross-references |
-| Cross-package SPM imports | External package symbols not resolved | Only affects multi-package repos |
-| `@_exported import` | Module re-exports not tracked | Framework wrapper patterns |
-
-## 🟢 Low Priority
-
-### Type Inference
-
-| Gap | Description | Impact |
-|-----|-------------|--------|
-| `switch` / `case` pattern binding | `case let x as Foo:` not tracked | Enum pattern matching |
-| Tuple destructuring | `let (a, b) = fn()` not handled | Uncommon pattern |
-| `@Environment` / `@EnvironmentObject` | SwiftUI dependency injection — no AST representation | Would need heuristic resolution |
-| `@Query` (SwiftData) | Property wrapper types not inferrable from AST | SwiftData-specific |
-| `#if canImport(...)` | Conditional compilation not evaluated | Cross-platform projects |
-
-## ✅ Resolved
-
-| Gap | Resolution | Commit |
-|-----|-----------|--------|
-| Cross-chunk implicit imports | `addSwiftImplicitImports` now uses `allFileList` instead of chunk-only `files` | `956dfd0` |
-| `private(set)` false positive | Regex excludes `private(set)` / `fileprivate(set)` from unexported check | `0a3cdce` |
-| `if let` / `guard let` binding | `extractIfGuardBinding` handles optional bindings | `16b1a63` |
-| `await` / `try` unwrapping | `unwrapSwiftExpression` strips wrappers before RHS analysis | `16b1a63` |
-| For-loop element type extraction | `extractForLoopBinding` + `extractSwiftElementTypeFromTypeNode` + type_annotation population in type-env | `956dfd0` |
-| `self` / `super` resolution | `lookupInEnv` handles `self`/`super` via AST walk | `16b1a63` |
-| Optional chaining `obj?.method()` | Handled via `optional_chaining_expression` | `16b1a63` |
-| Multi-inheritance specifiers | First specifier captured via `inheritance_specifier` query | `16b1a63` |
+The Swift resolver coverage lives primarily in
+`gitnexus/test/integration/resolvers/swift.test.ts`, with supporting unit
+coverage in `gitnexus/test/unit/swift-scope.test.ts`,
+`gitnexus/test/unit/method-extraction.test.ts`, and
+`gitnexus/test/unit/import-resolver-factory.test.ts`. The integration corpus now
+covers the same high-value categories used to judge Python and TypeScript:
+imports, aliasing, re-exports, receiver inference, parent dispatch, field
+reads/writes, overloads, closure receivers, declaration shapes, and module
+visibility.

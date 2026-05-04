@@ -609,6 +609,59 @@ describe.skipIf(!swiftAvailable)('Swift call-result binding', () => {
   });
 });
 
+describe.skipIf(!swiftAvailable || !swiftRegistryPrimary)(
+  'Swift assignment aliases, optional chaining, and writes',
+  () => {
+    let result: PipelineResult;
+
+    beforeAll(async () => {
+      result = await runPipelineFromRepo(
+        path.join(FIXTURES, 'swift-assignment-nullable-write'),
+        () => {},
+      );
+    }, 60000);
+
+    it('resolves direct assignment aliases through multiple hops', () => {
+      const calls = getRelationships(result, 'CALLS');
+      const saveCalls = calls.filter((c) => c.source === 'processAliases' && c.target === 'save');
+      expect(
+        saveCalls.filter((c) => c.targetFilePath === 'Models.swift').length,
+      ).toBeGreaterThanOrEqual(2);
+    });
+
+    it('resolves optional-chain member calls from the wrapped receiver type', () => {
+      const calls = getRelationships(result, 'CALLS');
+      const saveCall = calls.find((c) => c.source === 'processOptional' && c.target === 'save');
+      expect(saveCall).toBeDefined();
+      expect(saveCall!.targetFilePath).toBe('Models.swift');
+    });
+
+    it('resolves direct call-result chains without an intermediate variable', () => {
+      const calls = getRelationships(result, 'CALLS');
+      const saveCall = calls.find((c) => c.source === 'processDirectChain' && c.target === 'save');
+      expect(saveCall).toBeDefined();
+      expect(saveCall!.targetFilePath).toBe('Models.swift');
+    });
+
+    it('resolves super.member() to inherited Swift members', () => {
+      const calls = getRelationships(result, 'CALLS');
+      const inheritedCall = calls.find(
+        (c) => c.source === 'processSuper' && c.target === 'inheritedSave',
+      );
+      expect(inheritedCall).toBeDefined();
+      expect(inheritedCall!.targetFilePath).toBe('Models.swift');
+    });
+
+    it('emits write ACCESSES edges for Swift field assignments', () => {
+      const accesses = getRelationships(result, 'ACCESSES');
+      const writes = accesses.filter((e) => e.rel.reason === 'write');
+      const nameWrite = writes.find((e) => e.source === 'processAliases' && e.target === 'name');
+      expect(nameWrite).toBeDefined();
+      expect(nameWrite!.rel.confidence).toBe(1.0);
+    });
+  },
+);
+
 // ---------------------------------------------------------------------------
 // Method enrichment: isAbstract, isFinal, isStatic, annotations
 // Animal protocol with speak(), Dog class with speak(), static classify(),
@@ -994,6 +1047,39 @@ describe.skipIf(!swiftAvailable || !swiftRegistryPrimary)(
       );
       expect(testInternalCall).toBeDefined();
       expect(calls.find((c) => c.source === 'runTests' && c.target === 'secretHelper')).toBeUndefined();
+    });
+  },
+);
+
+describe.skipIf(!swiftAvailable || !swiftRegistryPrimary)(
+  'Swift @_exported import re-export chains',
+  () => {
+    let result: PipelineResult;
+
+    beforeAll(async () => {
+      result = await runPipelineFromRepo(path.join(FIXTURES, 'swift-exported-import'), () => {});
+    }, 60000);
+
+    it('resolves free functions re-exported through an @_exported import barrel', () => {
+      const calls = getRelationships(result, 'CALLS');
+      const factoryCall = calls.find(
+        (c) =>
+          c.source === 'runExportedImport' &&
+          c.target === 'makeExportedUser' &&
+          c.targetFilePath === 'Sources/Models/API.swift',
+      );
+      expect(factoryCall).toBeDefined();
+    });
+
+    it('propagates return types through Swift @_exported import barrels', () => {
+      const calls = getRelationships(result, 'CALLS');
+      const saveCall = calls.find(
+        (c) =>
+          c.source === 'runExportedImport' &&
+          c.target === 'save' &&
+          c.targetFilePath === 'Sources/Models/API.swift',
+      );
+      expect(saveCall).toBeDefined();
     });
   },
 );
