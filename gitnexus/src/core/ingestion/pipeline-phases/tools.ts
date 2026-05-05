@@ -211,8 +211,7 @@ function extractTypeScriptMcpTools(
 
 function collectToolDescriptionMap(toolContents: ReadonlyMap<string, string>): Map<string, string> {
   const descriptions = new Map<string, string>();
-  const entryPattern =
-    /(?:^|[,{]\s*)(?:['"]?([A-Za-z0-9_.:-]+)['"]?)\s*:\s*(['"`])([\s\S]*?)\2/gm;
+  const entryPattern = /(?:^|[,{]\s*)(?:['"]?([A-Za-z0-9_.:-]+)['"]?)\s*:\s*(['"`])([\s\S]*?)\2/gm;
   for (const [filePath, content] of toolContents) {
     if (!isTypeScriptLike(filePath) || !content.includes('DESCRIPTION')) continue;
     let match: RegExpExecArray | null;
@@ -501,7 +500,10 @@ function readQuotedString(source: string | undefined): string | undefined {
   return undefined;
 }
 
-function readObjectStringProperty(source: string | undefined, propertyName: string): string | undefined {
+function readObjectStringProperty(
+  source: string | undefined,
+  propertyName: string,
+): string | undefined {
   if (!source) return undefined;
   const pattern = new RegExp(
     `(?:^|[,\\{]\\s*)(?:${propertyName}|['"]${propertyName}['"])\\s*:\\s*(['"\`])([\\s\\S]*?)\\1`,
@@ -510,7 +512,10 @@ function readObjectStringProperty(source: string | undefined, propertyName: stri
   return match ? normalizeDescription(match[2]) : undefined;
 }
 
-function readFirstCallStringArg(source: string | undefined, functionName: string): string | undefined {
+function readFirstCallStringArg(
+  source: string | undefined,
+  functionName: string,
+): string | undefined {
   if (!source) return undefined;
   const pattern = new RegExp(`\\b${functionName}\\s*\\(\\s*(['"\`])([^'"\`]+)\\1`);
   const match = pattern.exec(source);
