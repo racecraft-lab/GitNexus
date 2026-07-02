@@ -6,6 +6,9 @@ const ENV_KEYS = [
   'GITNEXUS_EMBEDDING_MODEL',
   'GITNEXUS_EMBEDDING_API_KEY',
   'GITNEXUS_EMBEDDING_DIMS',
+  'GITNEXUS_EMBEDDING_HTTP_BATCH_SIZE',
+  'GITNEXUS_EMBEDDING_HTTP_CONCURRENCY',
+  'GITNEXUS_EMBEDDING_HTTP_TIMEOUT_MS',
 ] as const;
 
 /** 384d mock vector matching the default schema dimensions. */
@@ -287,6 +290,102 @@ describe('HTTP embedding backend', () => {
       expect(body1.dimensions).toBe(512);
     });
 
+    it('honors custom HTTP batch size', async () => {
+      process.env.GITNEXUS_EMBEDDING_URL = 'http://test:8080/v1';
+      process.env.GITNEXUS_EMBEDDING_MODEL = 'test-model';
+      process.env.GITNEXUS_EMBEDDING_HTTP_BATCH_SIZE = '8';
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_url, opts: any) => {
+          const input = JSON.parse(opts.body).input as string[];
+          return {
+            ok: true,
+            json: async () => ({
+              data: Array.from({ length: input.length }, () => ({ embedding: mockVec })),
+            }),
+          };
+        }),
+      );
+
+      const { embedBatch } = await import('../../src/core/embeddings/embedder.js');
+      const results = await embedBatch(Array.from({ length: 20 }, (_, i) => `text ${i}`));
+
+      const batchSizes = (fetch as any).mock.calls.map((call: any[]) => {
+        const body = JSON.parse(call[1].body);
+        return body.input.length;
+      });
+      expect(batchSizes).toEqual([8, 8, 4]);
+      expect(results).toHaveLength(20);
+    });
+
+    it('reports HTTP batch progress as each request completes', async () => {
+      process.env.GITNEXUS_EMBEDDING_URL = 'http://test:8080/v1';
+      process.env.GITNEXUS_EMBEDDING_MODEL = 'test-model';
+      process.env.GITNEXUS_EMBEDDING_HTTP_BATCH_SIZE = '2';
+      process.env.GITNEXUS_EMBEDDING_HTTP_CONCURRENCY = '1';
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_url, opts: any) => {
+          const input = JSON.parse(opts.body).input as string[];
+          return {
+            ok: true,
+            json: async () => ({
+              data: Array.from({ length: input.length }, () => ({ embedding: mockVec })),
+            }),
+          };
+        }),
+      );
+
+      const progress: Array<[number, number]> = [];
+      const { embedBatch } = await import('../../src/core/embeddings/embedder.js');
+      const results = await embedBatch(
+        Array.from({ length: 5 }, (_, i) => `text ${i}`),
+        (completed, total) => progress.push([completed, total]),
+      );
+
+      expect(results).toHaveLength(5);
+      expect(progress).toEqual([
+        [2, 5],
+        [4, 5],
+        [5, 5],
+      ]);
+    });
+
+    it('limits concurrent HTTP embedding requests', async () => {
+      process.env.GITNEXUS_EMBEDDING_URL = 'http://test:8080/v1';
+      process.env.GITNEXUS_EMBEDDING_MODEL = 'test-model';
+      process.env.GITNEXUS_EMBEDDING_HTTP_BATCH_SIZE = '1';
+      process.env.GITNEXUS_EMBEDDING_HTTP_CONCURRENCY = '2';
+
+      let inFlight = 0;
+      let maxInFlight = 0;
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_url, opts: any) => {
+          inFlight++;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await Promise.resolve();
+          const input = JSON.parse(opts.body).input as string[];
+          inFlight--;
+          return {
+            ok: true,
+            json: async () => ({
+              data: Array.from({ length: input.length }, () => ({ embedding: mockVec })),
+            }),
+          };
+        }),
+      );
+
+      const { embedBatch } = await import('../../src/core/embeddings/embedder.js');
+      const results = await embedBatch(['one', 'two', 'three', 'four']);
+
+      expect(fetch).toHaveBeenCalledTimes(4);
+      expect(results).toHaveLength(4);
+      expect(maxInFlight).toBe(2);
+    });
+
     it('rejects non-numeric GITNEXUS_EMBEDDING_DIMS values', async () => {
       process.env.GITNEXUS_EMBEDDING_URL = 'http://test:8080/v1';
       process.env.GITNEXUS_EMBEDDING_MODEL = 'test-model';
@@ -398,6 +497,22 @@ describe('HTTP embedding backend', () => {
 
       const { embedText } = await import('../../src/core/embeddings/embedder.js');
       await expect(embedText('test')).rejects.toThrow('timed out');
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('forwards a custom GITNEXUS_EMBEDDING_HTTP_TIMEOUT_MS into the timeout error message', async () => {
+      process.env.GITNEXUS_EMBEDDING_URL = 'http://test:8080/v1';
+      process.env.GITNEXUS_EMBEDDING_MODEL = 'test-model';
+      process.env.GITNEXUS_EMBEDDING_HTTP_TIMEOUT_MS = '90000';
+
+      const timeoutErr = new DOMException(
+        'The operation was aborted due to timeout',
+        'TimeoutError',
+      );
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(timeoutErr));
+
+      const { embedText } = await import('../../src/core/embeddings/embedder.js');
+      await expect(embedText('test')).rejects.toThrow('timed out after 90000ms');
       expect(fetch).toHaveBeenCalledTimes(1);
     });
 
