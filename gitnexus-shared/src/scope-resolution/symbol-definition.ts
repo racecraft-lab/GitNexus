@@ -69,6 +69,12 @@ export interface SymbolDefinition {
    *  Unavailable callables still participate in overload selection, but a
    *  selected unavailable target must suppress edge emission. */
   isDeleted?: boolean;
+  /** Declared visibility for languages that gate cross-file/cross-module
+   *  resolution on it (Swift `public`/`internal`/`private`/`fileprivate`/
+   *  `open`/`package`). Consumed by the `isCallableVisibleFromCaller` hook.
+   *  Absent for languages that don't stamp it, in which case visibility
+   *  filtering is a no-op (all candidates visible). */
+  visibility?: string;
   /** Links Method/Constructor/Property to owning Class/Struct/Trait nodeId */
   ownerId?: string;
   /** #1982/#1993: bridge-held enclosing-namespace path (e.g. `NS1`, `Outer.Inner`)

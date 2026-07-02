@@ -510,10 +510,36 @@ function isSwiftMemberWriteLhs(navNode: SyntaxNode): boolean {
   return parent.parent?.type === 'assignment';
 }
 
+/** Read a Swift declaration's visibility from its `modifiers >
+ *  visibility_modifier` child. Swift's default (no modifier) is `internal`;
+ *  `open` collapses to `public` for cross-module reachability. Returns the
+ *  visibility keyword so the resolver's `isCallableVisibleFromCaller` hook can
+ *  gate cross-module free-call resolution. */
+function swiftDeclarationVisibility(fnNode: SyntaxNode): string {
+  for (let i = 0; i < fnNode.namedChildCount; i++) {
+    const child = fnNode.namedChild(i);
+    if (child === null || child.type !== 'modifiers') continue;
+    for (let j = 0; j < child.namedChildCount; j++) {
+      const mod = child.namedChild(j);
+      if (mod === null || mod.type !== 'visibility_modifier') continue;
+      const kw = mod.text.trim();
+      return kw === 'open' ? 'public' : kw;
+    }
+  }
+  return 'internal';
+}
+
 /** Attach @declaration.parameter-count / required-parameter-count /
  *  parameter-types synthesized from a function-like node. */
 function attachArityMetadata(grouped: Record<string, Capture>, fnNode: SyntaxNode): void {
   const arity = computeSwiftArityMetadata(fnNode);
+  // Visibility channel — gates cross-module free-call resolution
+  // (`isCallableVisibleFromCaller`). Stamped on every function-like decl.
+  grouped['@declaration.visibility'] = syntheticCapture(
+    '@declaration.visibility',
+    fnNode,
+    swiftDeclarationVisibility(fnNode),
+  );
   if (arity.parameterCount !== undefined) {
     grouped['@declaration.parameter-count'] = syntheticCapture(
       '@declaration.parameter-count',

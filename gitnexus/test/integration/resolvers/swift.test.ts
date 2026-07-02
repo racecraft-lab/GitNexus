@@ -1545,3 +1545,45 @@ describe.skipIf(!swiftAvailable)('Swift argument-label overloads', () => {
     expect(calls.find((c) => c.source === 'runLookup' && c.target === 'finish')).toBeDefined();
   });
 });
+
+describe.skipIf(!swiftAvailable)('Swift module visibility', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'swift-module-visibility'), () => {});
+  }, 60000);
+
+  it('exports public symbols to an importing target', () => {
+    const calls = getRelationships(result, 'CALLS');
+    expect(
+      calls.find(
+        (c) => c.target === 'publicHelper' && c.targetFilePath === 'Sources/Models/API.swift',
+      ),
+    ).toBeDefined();
+    expect(
+      calls.find((c) => c.target === 'doWork' && c.targetFilePath === 'Sources/Models/API.swift'),
+    ).toBeDefined();
+  });
+
+  it('does not export internal or private helpers to a normal importing target', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const appCalls = calls.filter((c) => c.source === 'runApp');
+    expect(appCalls.find((c) => c.target === 'internalHelper')).toBeUndefined();
+    expect(appCalls.find((c) => c.target === 'secretHelper')).toBeUndefined();
+    expect(appCalls.find((c) => c.target === 'fileOnlyHelper')).toBeUndefined();
+  });
+
+  it('allows @testable import to resolve internal helpers without exposing private helpers', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const testInternalCall = calls.find(
+      (c) =>
+        c.source === 'runTests' &&
+        c.target === 'internalHelper' &&
+        c.targetFilePath === 'Sources/Models/API.swift',
+    );
+    expect(testInternalCall).toBeDefined();
+    expect(
+      calls.find((c) => c.source === 'runTests' && c.target === 'secretHelper'),
+    ).toBeUndefined();
+  });
+});

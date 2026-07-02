@@ -26,6 +26,7 @@
 import type { BindingRef, ParsedFile, ScopeId, SymbolDefinition } from 'gitnexus-shared';
 import type { ScopeResolutionIndexes } from '../../model/scope-resolution-indexes.js';
 import { coerceSwiftTargets, groupSwiftFilesBySpmTarget } from './target-grouping.js';
+import { seedSwiftVisibilityCaches } from './visibility.js';
 
 export function populateSwiftTargetSiblings(
   parsedFiles: readonly ParsedFile[],
@@ -43,6 +44,11 @@ export function populateSwiftTargetSiblings(
     (parsed) => parsed.filePath,
     targets,
   );
+
+  // Seed the visibility caches (filePath → SPM target, and per-file @testable
+  // imports) BEFORE the <2 sibling-skip below, so single-file targets are
+  // still recorded for cross-module visibility gating.
+  seedSwiftVisibilityCaches(filesByTarget, ctx.fileContents);
 
   const augmentations = indexes.bindingAugmentations as Map<ScopeId, Map<string, BindingRef[]>>;
 

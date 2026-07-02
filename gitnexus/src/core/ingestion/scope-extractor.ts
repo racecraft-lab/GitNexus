@@ -573,6 +573,7 @@ function buildDefFromDeclarationMatch(
     match['@declaration.parameter-type-classes'],
   );
   const declaredType = match['@declaration.field-type']?.text;
+  const visibility = match['@declaration.visibility']?.text;
   const returnType = match['@declaration.return-type']?.text;
   const templateConstraints = parseJsonCapture(match['@declaration.template-constraints']);
   const isExplicit = parseBooleanCapture(match['@declaration.is-explicit']);
@@ -589,6 +590,7 @@ function buildDefFromDeclarationMatch(
     ...(parameterLabels !== undefined ? { parameterLabels } : {}),
     ...(parameterTypeClasses !== undefined ? { parameterTypeClasses } : {}),
     ...(declaredType !== undefined ? { declaredType } : {}),
+    ...(visibility !== undefined ? { visibility } : {}),
     ...(returnType !== undefined ? { returnType } : {}),
     ...(templateArguments !== undefined ? { templateArguments } : {}),
     ...(templateConstraints !== undefined ? { templateConstraints } : {}),
@@ -1170,6 +1172,7 @@ const KNOWN_SUB_TAGS: ReadonlySet<string> = new Set<string>([
   '@declaration.parameter-types',
   '@declaration.parameter-labels',
   '@declaration.parameter-type-classes',
+  '@declaration.visibility',
   '@declaration.return-type',
   '@declaration.template-constraints',
   '@declaration.is-explicit',
