@@ -20,6 +20,14 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
       - run: npm ci
+      # prettier-plugin-tailwindcss (root .prettierrc) resolves its
+      # `tailwindStylesheet` (gitnexus-web/src/index.css) through the real
+      # `tailwindcss` package, which lives only in gitnexus-web/node_modules.
+      # Without it installed, the plugin can't parse custom classes defined
+      # in that stylesheet (e.g. `.scrollbar-thin`) and sorts them
+      # differently than when the full dependency tree is present.
+      - run: npm ci
+        working-directory: gitnexus-web
       - run: npx prettier --check .
 
   lint:
