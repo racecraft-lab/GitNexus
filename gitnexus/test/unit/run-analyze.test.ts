@@ -179,6 +179,12 @@ describe('run-analyze module', () => {
   // ever runs).
   it('does not use the fast path when --enrich-clusters is requested', async () => {
     const tmpRepo = await createTempDir('gitnexus-run-analyze-enrich-clusters-requested-');
+    // Empty sandboxed home so `resolveLLMConfig`'s `loadCLIConfig()` fallback
+    // reads a fresh, key-less `config.json` instead of the machine's real
+    // `~/.gitnexus/config.json` — a saved API key there would let this test
+    // attempt a live LLM call. `getGlobalDir()` honors `GITNEXUS_HOME`, same
+    // isolation pattern as `repo-manager.test.ts`.
+    const tmpHome = await createTempDir('gitnexus-run-analyze-enrich-clusters-home-');
     try {
       execSync('git init', { cwd: tmpRepo.dbPath, stdio: 'pipe' });
       execSync('git -c user.name=test -c user.email=test@test commit --allow-empty -m init', {
@@ -207,10 +213,12 @@ describe('run-analyze module', () => {
       const prevOpenAIKey = process.env.OPENAI_API_KEY;
       const prevClusterKey = process.env.GITNEXUS_CLUSTER_ENRICHMENT_API_KEY;
       const prevInstallPolicy = process.env.GITNEXUS_LBUG_EXTENSION_INSTALL;
+      const prevGitnexusHome = process.env.GITNEXUS_HOME;
       delete process.env.GITNEXUS_API_KEY;
       delete process.env.OPENAI_API_KEY;
       delete process.env.GITNEXUS_CLUSTER_ENRICHMENT_API_KEY;
       process.env.GITNEXUS_LBUG_EXTENSION_INSTALL = 'never';
+      process.env.GITNEXUS_HOME = tmpHome.dbPath;
       try {
         const { runFullAnalysis } = await import('../../src/core/run-analyze.js');
         const result = await runFullAnalysis(
@@ -233,9 +241,12 @@ describe('run-analyze module', () => {
         } else {
           process.env.GITNEXUS_LBUG_EXTENSION_INSTALL = prevInstallPolicy;
         }
+        if (prevGitnexusHome === undefined) delete process.env.GITNEXUS_HOME;
+        else process.env.GITNEXUS_HOME = prevGitnexusHome;
       }
     } finally {
       await tmpRepo.cleanup();
+      await tmpHome.cleanup();
     }
   });
 
