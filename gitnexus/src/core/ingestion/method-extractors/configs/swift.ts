@@ -30,6 +30,10 @@ const SWIFT_VIS = new Set<MethodVisibility>([
  * (not a 'name' field) on both function_declaration and protocol_function_declaration.
  */
 function extractSwiftName(node: SyntaxNode): string | undefined {
+  // A `subscript_declaration` has no name — its grammar `name:` field is the
+  // return type. Model it as a callable member named "subscript".
+  if (node.type === 'subscript_declaration') return 'subscript';
+
   // Try field-based name first
   const nameField = node.childForFieldName('name');
   if (nameField) return nameField.text;
@@ -293,8 +297,9 @@ export const swiftMethodConfig: MethodExtractionConfig = {
   // protocol_declaration is a separate, confirmed node type.
   typeDeclarationNodes: ['class_declaration', 'protocol_declaration'],
 
-  // function_declaration for class/struct methods, protocol_function_declaration for protocol methods
-  methodNodeTypes: ['function_declaration', 'protocol_function_declaration'],
+  // function_declaration for class/struct methods, protocol_function_declaration for protocol methods,
+  // subscript_declaration for `subscript(...) -> T` accessors (modeled as a callable member "subscript").
+  methodNodeTypes: ['function_declaration', 'protocol_function_declaration', 'subscript_declaration'],
 
   // class_body for class/struct/extension/actor, protocol_body for protocols,
   // enum_class_body for enums (F79). Without enum_class_body the factory only

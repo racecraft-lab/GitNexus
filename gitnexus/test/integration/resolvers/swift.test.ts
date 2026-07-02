@@ -1457,3 +1457,35 @@ describe.skipIf(!swiftAvailable)('SwiftPM custom target paths and dependencies',
   // (`!swiftRegistryPrimary`-guarded). The custom-path IMPORT itself resolves,
   // proven by the free-function `makeCoreService` edge above.
 });
+
+// ---------------------------------------------------------------------------
+// Declaration shapes: associatedtype -> TypeAlias, subscript -> callable member,
+// actor constructor inference. Ported from the fork (stream-4a CAT-B #7/#8);
+// `!swiftRegistryPrimary` guard stripped. Fixture: swift-declaration-shapes.
+// ---------------------------------------------------------------------------
+describe.skipIf(!swiftAvailable)('Swift declaration shapes', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'swift-declaration-shapes'), () => {});
+  }, 60000);
+
+  it('models associatedtype declarations as type aliases', () => {
+    const aliases = getNodesByLabel(result, 'TypeAlias');
+    expect(aliases).toContain('Entity');
+  });
+
+  it('models subscript declarations as callable members', () => {
+    const functions = getNodesByLabelFull(result, 'Function');
+    const methods = getNodesByLabelFull(result, 'Method');
+    const subscripts = [...functions, ...methods].filter((n) => n.name === 'subscript');
+    expect(subscripts.length).toBeGreaterThan(0);
+  });
+
+  it('keeps actor methods resolvable through actor constructor inference', () => {
+    const classes = getNodesByLabel(result, 'Class');
+    expect(classes).toContain('Cache');
+    const calls = getRelationships(result, 'CALLS');
+    expect(calls.find((c) => c.source === 'runCache' && c.target === 'store')).toBeDefined();
+  });
+});
