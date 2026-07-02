@@ -126,7 +126,11 @@ export const swiftPackageStrategy: ImportResolverStrategy = (rawImportPath, _fil
           const narrowed = files.filter(
             (file) => swiftBasenameWithoutExtension(file.replace(/\\/g, '/')) === declarationName,
           );
-          return narrowed.length > 0 ? { kind: 'files', files: narrowed } : null;
+          // Swift doesn't require type-name/file-name alignment (`User` can
+          // live in `Types.swift`), so a basename miss isn't evidence the
+          // decl-import failed — fall back to the full target fileset rather
+          // than wrongly failing resolution.
+          return { kind: 'files', files: narrowed.length > 0 ? narrowed : [...files] };
         }
         // Copy so callers can't mutate the cached index bucket.
         return { kind: 'files', files: [...files] };

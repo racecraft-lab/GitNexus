@@ -501,7 +501,7 @@ describe('swiftPackageStrategy', () => {
     expect(result).toEqual({ kind: 'files', files: ['Package/Sources/Models/User.swift'] });
   });
 
-  it('does not widen unresolved explicit Swift declaration imports to the whole target', () => {
+  it('falls back to the full target fileset when explicit Swift declaration imports match no basename', () => {
     const files = ['Package/Sources/Models/Repo.swift', 'Package/Sources/App/App.swift'];
     const ctx = makeCtx(files, {
       swiftPackageConfig: {
@@ -509,7 +509,23 @@ describe('swiftPackageStrategy', () => {
       },
     });
     const result = swiftPackageStrategy('Models.User', 'Package/Sources/App/App.swift', ctx);
-    expect(result).toBeNull();
+    // Swift doesn't require type-name/file-name alignment — `User` can live
+    // in a differently-named file (e.g. `Repo.swift`). A basename miss must
+    // not fail resolution; fall back to the target's full fileset.
+    expect(result).toEqual({ kind: 'files', files: ['Package/Sources/Models/Repo.swift'] });
+  });
+
+  it('resolves an explicit Swift declaration import whose type lives in a differently-named file', () => {
+    const files = ['Package/Sources/Models/Types.swift', 'Package/Sources/App/App.swift'];
+    const ctx = makeCtx(files, {
+      swiftPackageConfig: {
+        targets: new Map([['Models', 'Package/Sources/Models']]),
+      },
+    });
+    // `import struct Models.User` where `User` is declared inside
+    // `Types.swift` rather than a `User.swift` file.
+    const result = swiftPackageStrategy('Models.User', 'Package/Sources/App/App.swift', ctx);
+    expect(result).toEqual({ kind: 'files', files: ['Package/Sources/Models/Types.swift'] });
   });
 });
 
