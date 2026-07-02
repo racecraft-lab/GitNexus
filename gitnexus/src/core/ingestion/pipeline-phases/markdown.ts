@@ -33,12 +33,7 @@ export const markdownPhase: PipelinePhase<MarkdownOutput> = {
   ): Promise<MarkdownOutput> {
     const { scannedFiles, allPathSet } = getPhaseOutput<StructureOutput>(deps, 'structure');
 
-    const reindexPaths = ctx.options?.reindexPaths ? new Set(ctx.options.reindexPaths) : undefined;
-    const mdScanned = scannedFiles.filter(
-      (f) =>
-        (reindexPaths === undefined || reindexPaths.has(f.path)) &&
-        (f.path.endsWith('.md') || f.path.endsWith('.mdx')),
-    );
+    const mdScanned = scannedFiles.filter((f) => f.path.endsWith('.md') || f.path.endsWith('.mdx'));
 
     if (mdScanned.length === 0) {
       return { sections: 0, links: 0 };
