@@ -549,6 +549,7 @@ export function emitReceiverBoundCalls(
                 site.argumentTypes,
                 {
                   argumentTypeClasses: site.argumentTypeClasses,
+                  argumentLabels: site.argumentLabels,
                   conversionRankFn: provider.conversionRankFn,
                   conversionOnlyArgTypePrefixes: provider.conversionOnlyArgTypePrefixes,
                   constraintCompatibility: provider.constraintCompatibility,
@@ -1326,6 +1327,7 @@ function pickOverload(
 
   const candidates = narrowOverloadCandidates(overloads, site.arity, site.argumentTypes, {
     argumentTypeClasses: site.argumentTypeClasses,
+    argumentLabels: site.argumentLabels,
     conversionRankFn: provider.conversionRankFn,
     conversionOnlyArgTypePrefixes: provider.conversionOnlyArgTypePrefixes,
     constraintCompatibility: provider.constraintCompatibility,
@@ -1434,6 +1436,7 @@ function pickFirstNonStaticOnly(
 
   const candidates = narrowOverloadCandidates(overloads, site.arity, site.argumentTypes, {
     argumentTypeClasses: site.argumentTypeClasses,
+    argumentLabels: site.argumentLabels,
     conversionRankFn: provider.conversionRankFn,
     conversionOnlyArgTypePrefixes: provider.conversionOnlyArgTypePrefixes,
     constraintCompatibility: provider.constraintCompatibility,
@@ -1480,6 +1483,7 @@ function recordReceiverOverloadSuppression(
   const overloads = model.methods.lookupAllByOwner(ownerId, memberName);
   const candidates = narrowOverloadCandidates(overloads, site.arity, site.argumentTypes, {
     argumentTypeClasses: site.argumentTypeClasses,
+    argumentLabels: site.argumentLabels,
     conversionRankFn: provider.conversionRankFn,
     conversionOnlyArgTypePrefixes: provider.conversionOnlyArgTypePrefixes,
     constraintCompatibility: provider.constraintCompatibility,

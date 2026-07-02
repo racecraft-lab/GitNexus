@@ -22,6 +22,10 @@ interface SwiftArityMetadata {
   readonly parameterCount: number | undefined;
   readonly requiredParameterCount: number | undefined;
   readonly parameterTypes: readonly string[] | undefined;
+  /** External call-site labels, one per formal parameter (`''` when omitted
+   *  via `_`). `undefined` when the function has no parameters. Drives Swift
+   *  argument-label overload narrowing (`find(id:)` vs `find(name:)`). */
+  readonly parameterLabels: readonly string[] | undefined;
 }
 
 export function computeSwiftArityMetadata(fnNode: SyntaxNode): SwiftArityMetadata {
@@ -30,10 +34,12 @@ export function computeSwiftArityMetadata(fnNode: SyntaxNode): SwiftArityMetadat
   let hasVariadic = false;
   let optionalCount = 0;
   const types: string[] = [];
+  const labels: string[] = [];
   for (const p of params) {
     if (p.isVariadic) hasVariadic = true;
     else if (p.isOptional) optionalCount++;
     if (p.type !== null) types.push(p.type);
+    labels.push(p.label ?? '');
   }
   if (hasVariadic) types.push('variadic');
 
@@ -45,5 +51,6 @@ export function computeSwiftArityMetadata(fnNode: SyntaxNode): SwiftArityMetadat
     parameterCount,
     requiredParameterCount,
     parameterTypes: types.length > 0 ? types : undefined,
+    parameterLabels: labels.length > 0 ? labels : undefined,
   };
 }

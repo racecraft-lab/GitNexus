@@ -1516,3 +1516,32 @@ describe.skipIf(!swiftAvailable)('Swift deinit as callable member', () => {
     // ownership). The deinit NODE modeling itself works and is asserted above.
   });
 });
+
+describe.skipIf(!swiftAvailable)('Swift argument-label overloads', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'swift-label-overload'), () => {});
+  }, 60000);
+
+  it('keeps same-arity same-type overload declarations separate by external label', () => {
+    const functions = getNodesByLabelFull(result, 'Function');
+    const finds = functions.filter(
+      (n) => n.name === 'find' && n.properties.filePath === 'Lookup.swift',
+    );
+    expect(finds.length).toBe(2);
+    expect(finds.map((n) => n.properties.parameterLabels).sort()).toEqual([['id'], ['name']]);
+  });
+
+  it('resolves both same-type label overload call sites', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const findCalls = calls.filter((c) => c.source === 'runLookup' && c.target === 'find');
+    expect(findCalls.length).toBe(2);
+  });
+
+  it('counts a trailing closure as an argument and resolves the call body receiver', () => {
+    const calls = getRelationships(result, 'CALLS');
+    expect(calls.find((c) => c.source === 'runLookup' && c.target === 'perform')).toBeDefined();
+    expect(calls.find((c) => c.source === 'runLookup' && c.target === 'finish')).toBeDefined();
+  });
+});

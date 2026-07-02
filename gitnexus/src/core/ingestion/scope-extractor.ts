@@ -568,6 +568,7 @@ function buildDefFromDeclarationMatch(
   const parameterCount = parseIntCapture(match['@declaration.parameter-count']);
   const requiredParameterCount = parseIntCapture(match['@declaration.required-parameter-count']);
   const parameterTypes = parseJsonStringArrayCapture(match['@declaration.parameter-types']);
+  const parameterLabels = parseJsonStringArrayCapture(match['@declaration.parameter-labels']);
   const parameterTypeClasses = parseJsonParameterTypeClassesCapture(
     match['@declaration.parameter-type-classes'],
   );
@@ -585,6 +586,7 @@ function buildDefFromDeclarationMatch(
     ...(parameterCount !== undefined ? { parameterCount } : {}),
     ...(requiredParameterCount !== undefined ? { requiredParameterCount } : {}),
     ...(parameterTypes !== undefined ? { parameterTypes } : {}),
+    ...(parameterLabels !== undefined ? { parameterLabels } : {}),
     ...(parameterTypeClasses !== undefined ? { parameterTypeClasses } : {}),
     ...(declaredType !== undefined ? { declaredType } : {}),
     ...(returnType !== undefined ? { returnType } : {}),
@@ -1021,6 +1023,7 @@ function pass5CollectReferences(
     const explicitReceiver = extractExplicitReceiver(match);
     const arity = extractArity(match);
     const argumentTypes = extractArgumentTypes(match);
+    const argumentLabels = parseJsonStringArrayCapture(match['@reference.argument-labels']);
     const argumentTypeClasses = parseJsonParameterTypeClassesCapture(
       match['@reference.parameter-type-classes'],
     );
@@ -1037,6 +1040,7 @@ function pass5CollectReferences(
       ...(explicitReceiver !== undefined ? { explicitReceiver } : {}),
       ...(arity !== undefined ? { arity } : {}),
       ...(argumentTypes !== undefined ? { argumentTypes } : {}),
+      ...(argumentLabels !== undefined ? { argumentLabels } : {}),
       ...(argumentTypeClasses !== undefined ? { argumentTypeClasses } : {}),
     };
     referenceSites.push(site);
@@ -1160,9 +1164,11 @@ const KNOWN_SUB_TAGS: ReadonlySet<string> = new Set<string>([
   '@reference.arity',
   '@reference.parameter-types',
   '@reference.parameter-type-classes',
+  '@reference.argument-labels',
   '@declaration.parameter-count',
   '@declaration.required-parameter-count',
   '@declaration.parameter-types',
+  '@declaration.parameter-labels',
   '@declaration.parameter-type-classes',
   '@declaration.return-type',
   '@declaration.template-constraints',

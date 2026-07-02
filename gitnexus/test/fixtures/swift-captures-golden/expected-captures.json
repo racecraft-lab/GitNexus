@@ -1,15 +1,15 @@
 {
   "swift-abstract-dispatch/Sources/App.swift": {
     "captureGroups": 9,
-    "digest": "56b82214cca3ed89312d84d6b04a48ee13cbe748ea6978e9bffa20ce46ac0930"
+    "digest": "a3188dc512df9af45d17e39c27a46c34d15a78c9d4ba97e39c7ab46d979c68bf"
   },
   "swift-abstract-dispatch/Sources/Repository.swift": {
     "captureGroups": 24,
-    "digest": "3a3fa6017b6937de81e5f70bcab727910edb00053c7e5bd30da67ed1fb84c71f"
+    "digest": "cda8c6620293857044f3fc1de76e2a8313b1214b67b1ed3f38748f555e5f7a5b"
   },
   "swift-assignment-nullable-write/Models.swift": {
     "captureGroups": 54,
-    "digest": "a8c2eb755218bb24522c65204bf297705bf9d6285dd36ab4fde65c2d68872410"
+    "digest": "c70570441d919b6322a59585d5e34ade478000db0e66317bc37be2c72530d35f"
   },
   "swift-await-try/App.swift": {
     "captureGroups": 13,
@@ -21,11 +21,11 @@
   },
   "swift-call-result-binding/App.swift": {
     "captureGroups": 7,
-    "digest": "979534a46ee420a7a5dfd6b029c9fe5d67ca1b00f3bdc5e8977d72a1c316b75d"
+    "digest": "89ff21356f3eb1f3433a94fb8f379806b7c694ea82687fff8730428b76689cf4"
   },
   "swift-call-result-binding/Models.swift": {
     "captureGroups": 14,
-    "digest": "177c25e87bb0507385cb1da50ebb08305c83c62af637311fad53928ba1d491bc"
+    "digest": "828ee4d394f29bc6626572dd9b64a02bf8fbf3b86b70b0fbbda44da1a44022ba"
   },
   "swift-child-extends-parent/Sources/App.swift": {
     "captureGroups": 10,
@@ -45,7 +45,7 @@
   },
   "swift-closure-receiver-inference/Models.swift": {
     "captureGroups": 13,
-    "digest": "a9c9cece6efd3c449bbf56ec461b1906ed6df62c11678e2e038430825a3581d1"
+    "digest": "757c44d97627fdf178b3a3154c04a9d7402cfb21c20886f06b52f9608eed3f8b"
   },
   "swift-constructor-fallback/App.swift": {
     "captureGroups": 7,
@@ -57,15 +57,15 @@
   },
   "swift-constructor-type-inference/Models/Repo.swift": {
     "captureGroups": 14,
-    "digest": "a1e1b75aa5a637bdf1e47ffd5cea61b2f6b139078db766d4926d0d99086abe34"
+    "digest": "5cfbe1b685a90bae88040f12599f94a58bdc3d80e0fff80e868758960aa3e6ef"
   },
   "swift-constructor-type-inference/Models/User.swift": {
     "captureGroups": 14,
-    "digest": "107563b39540473845aeafc30aae96191eae60ba56bed8d8b13dd98aaef72f0a"
+    "digest": "dd72adfcb3561ba34785c899606cee7641d61f9c5cb2aedd33e080b58174b722"
   },
   "swift-constructor-type-inference/Services/App.swift": {
     "captureGroups": 12,
-    "digest": "a9c40a2dcb51c6e6a9adbaa869183eed90a81302729d4d7a0c300084ea2978e1"
+    "digest": "12c9bd9c7f41412526272480a57b3152e5866db7a97b4e874b92aeadc3063468"
   },
   "swift-declaration-shapes/Repository.swift": {
     "captureGroups": 14,
@@ -85,7 +85,7 @@
   },
   "swift-exported-import/Package.swift": {
     "captureGroups": 5,
-    "digest": "5a09db953430cbe294d0b933ebcd69a6ea257b86684e2d41b7886230236b27d1"
+    "digest": "d0869b1a973940013e78479632b685b582a38e8a26c11ded012dca51604d182c"
   },
   "swift-exported-import/Sources/App/main.swift": {
     "captureGroups": 8,
@@ -101,11 +101,11 @@
   },
   "swift-extension-dedup/App.swift": {
     "captureGroups": 8,
-    "digest": "9130082fe853a9f5b07d9fa420203c98f24770c685872afdc0f0f99707770f4f"
+    "digest": "3010b0e42c457e9fef658161daf389498a9cb3b0e57f7f65c89330530e24db31"
   },
   "swift-extension-dedup/Product.swift": {
     "captureGroups": 14,
-    "digest": "86c0c65ace3809f2f13cca1dabe54328c354923cde0e29e526542a9291a66522"
+    "digest": "f09f5738a220e470c30e2406011a195979c276860249a9282e4615775d1d472f"
   },
   "swift-extension-dedup/ProductExtensions.swift": {
     "captureGroups": 8,
@@ -113,7 +113,7 @@
   },
   "swift-field-types/App.swift": {
     "captureGroups": 6,
-    "digest": "2cb023f94129e0bd07e1116892bad2597eb0f3aa02079deb029d5e3604311999"
+    "digest": "885173a2f4c73700db8914d4c52f22ed254384e4639300cacf9534bfe919313e"
   },
   "swift-field-types/Models.swift": {
     "captureGroups": 20,
@@ -121,15 +121,15 @@
   },
   "swift-first-class-gaps/Package.swift": {
     "captureGroups": 5,
-    "digest": "3e9985d0d569a81cf3f6347d5dc640bdde1748cc48fe95905567ab999ffc71ae"
+    "digest": "62e0574e3d9385479ac88403ab4e8118c3818dfee7ee735901d23239fae8e9fa"
   },
   "swift-first-class-gaps/Sources/App/main.swift": {
     "captureGroups": 61,
-    "digest": "5e46c7940981ebc2f4c7bdf2f429280f2623d4b03f4f0cae3339d5a76ce89706"
+    "digest": "fd76b5706d44d70c71101ef0baca57d02b01d41f68a68f37e70be29ce6a94b2f"
   },
   "swift-first-class-gaps/Sources/AvailableKit/Models.swift": {
     "captureGroups": 91,
-    "digest": "071283d54677c58a71dc2eca72ac8b976fc364f1ec647736c1f657af57ef3768"
+    "digest": "4d7760d4ea6c077f86a4c2dd294bf2c3220bb3ff9fc008fcbb87a38c85adda62"
   },
   "swift-for-loop-inference/App.swift": {
     "captureGroups": 5,
@@ -157,23 +157,23 @@
   },
   "swift-init-cross-file/User.swift": {
     "captureGroups": 17,
-    "digest": "238af425526a62a088a1c4b3ba75c9249e375ffbeedb991c1b7481fa20e11543"
+    "digest": "db24c05b1251d4c3b50b2ae3158eaa1f454765daace2db7b5ebd7b19a669089f"
   },
   "swift-init-cross-file/main.swift": {
     "captureGroups": 8,
-    "digest": "3007e4849cf77cc6cb360a1dbf70abec414a408076020f4730d01b8a80c1ddd3"
+    "digest": "c4040fc5602820abccb4ac6aa90f8025524687ef097fee8940d9f7fde9488a67"
   },
   "swift-label-overload/Lookup.swift": {
     "captureGroups": 30,
-    "digest": "92459289dfdcd50629fcd095da82b250ab04d87eff5158ed651034f78f19bbef"
+    "digest": "770b9b23df98246c7d270165e36fb63eda52a452298341c97c299a41832148c0"
   },
   "swift-member-write-access/App.swift": {
     "captureGroups": 11,
-    "digest": "43c147d979761375f88bccd980f9db2274a937a3157ecaf93ca337fa54d0ae39"
+    "digest": "098e1d1188095fc9103a0c879897759aaa20b9d70800f4b66fa9b7e8ccb4a494"
   },
   "swift-member-write-access/Models.swift": {
     "captureGroups": 23,
-    "digest": "e830e3dca7d6c6260181b78d4af5bc61e031bdce3a451588989f17223a5eac1c"
+    "digest": "f820484417d2742f27fc115d711239fd36fa2c8c56522d3379daf6fbbc4b1919"
   },
   "swift-method-enrichment/Sources/Animal.swift": {
     "captureGroups": 25,
@@ -185,7 +185,7 @@
   },
   "swift-module-selectors/Package.swift": {
     "captureGroups": 5,
-    "digest": "75e2a8eff73f2d7e2c5366606878f363f219f639cd5da43050111d0ee2495da5"
+    "digest": "f12bbc7570063e71d2893a60453fd4a086f1d78d613d98f67284b1c8976f9d08"
   },
   "swift-module-selectors/Sources/App/main.swift": {
     "captureGroups": 6,
@@ -197,7 +197,7 @@
   },
   "swift-module-visibility/Package.swift": {
     "captureGroups": 5,
-    "digest": "1cb118df6bc46e548f24ab626b48c6bd46ea6e7f78808ada02881f1b1266a10e"
+    "digest": "69d6906da886cf8d4db4afec7ce15d7f71ae07ab95b52be46e28b28c1e37e175"
   },
   "swift-module-visibility/Sources/App/main.swift": {
     "captureGroups": 12,
@@ -221,7 +221,7 @@
   },
   "swift-multidir-target/Package.swift": {
     "captureGroups": 5,
-    "digest": "7c27b1db8b34bf3e81963c29f9f51f1226c1012b7a028c6207209914412b9d5f"
+    "digest": "804fb198234b215d767a7fa141417d406f0a8d49977665b6686e809deac7fff2"
   },
   "swift-multidir-target/Sources/Alpha/Core/User.swift": {
     "captureGroups": 7,
@@ -253,15 +253,15 @@
   },
   "swift-overload-dispatch/App.swift": {
     "captureGroups": 7,
-    "digest": "db8515d0d61419e827767ced61b6bb1949e672b8df11c35cc96882d60f007e07"
+    "digest": "4a3954bc0e9675dd5fbf3a82961eb2ca1f8e3123ba682d0ba58eb9e779e74f17"
   },
   "swift-overload-dispatch/Repository.swift": {
     "captureGroups": 11,
-    "digest": "b5ed80965325806c715d1c3a65163b014e0bbba5ca7e2df9d7c81b084fada15e"
+    "digest": "8a5e1ff8aae644ec07b9dfa309da81241ce32d12616a4091a158fd46cf0e2024"
   },
   "swift-overload-dispatch/SqlRepository.swift": {
     "captureGroups": 23,
-    "digest": "e5abcf7249afe3fb58fad54ec17da29195a95a05e6f1275375b9dc395030d9dc"
+    "digest": "ebeee30d559400514a1fc91c32d49ef5e67d0561deed8c659f565a373308f3c1"
   },
   "swift-package-custom-targets/Apps/App/main.swift": {
     "captureGroups": 8,
@@ -273,7 +273,7 @@
   },
   "swift-package-custom-targets/Package.swift": {
     "captureGroups": 5,
-    "digest": "d02475828e152e463358d7ba347af6b7dded0923ce85dacef17be841ab667d5a"
+    "digest": "ab8610a01e178a76fa8d9cb107cc0949f324c90ddb500b40af09ee88308bd772"
   },
   "swift-parent-resolution/Sources/Models/BaseModel.swift": {
     "captureGroups": 7,
@@ -301,19 +301,19 @@
   },
   "swift-return-type-inference/App.swift": {
     "captureGroups": 21,
-    "digest": "ec0a14090e0240bdd52a955cf7c95c2bc994085ca1482911dd882c5cdaa17c81"
+    "digest": "7ea63ed192248d1081139157e24310540013a08c00054ebbb7f4742d8accf1c8"
   },
   "swift-return-type-inference/Models.swift": {
     "captureGroups": 27,
-    "digest": "3d1a5a4fe1deb91dc2ba74f71e7bc0b42dbe1dde3b374891fbb3fcf8d265f3a8"
+    "digest": "f6476afff0b4c2cce174cb335a0c5e2af53eba9e5263b51c27fe216315b1583c"
   },
   "swift-return-type/App.swift": {
     "captureGroups": 7,
-    "digest": "979534a46ee420a7a5dfd6b029c9fe5d67ca1b00f3bdc5e8977d72a1c316b75d"
+    "digest": "89ff21356f3eb1f3433a94fb8f379806b7c694ea82687fff8730428b76689cf4"
   },
   "swift-return-type/Models.swift": {
     "captureGroups": 18,
-    "digest": "dcb5562e378f8672c85ade10d2dc38b499af2cc02efeb4c0f80ac8ce83ce7d02"
+    "digest": "2f426f8c8e6b674d12e2e9de009aff06314c0dcc739dfcc7543fbe24eea4cb21"
   },
   "swift-self-this-resolution/Sources/Models/Repo.swift": {
     "captureGroups": 7,

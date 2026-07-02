@@ -278,6 +278,17 @@ export function emitSwiftScopeCaptures(
           callNode,
           String(countCallArguments(callNode)),
         );
+        // Call-site argument labels — feeds the overload-narrowing label axis
+        // so `find(id:)` and `find(name:)` resolve to their distinct overloads.
+        // Only emitted when at least one argument is labeled.
+        const argLabels = collectCallArgumentLabels(callNode);
+        if (argLabels.some((l) => l !== '')) {
+          grouped['@reference.argument-labels'] = syntheticCapture(
+            '@reference.argument-labels',
+            callNode,
+            JSON.stringify(argLabels),
+          );
+        }
       }
     }
 
@@ -524,6 +535,51 @@ function attachArityMetadata(grouped: Record<string, Capture>, fnNode: SyntaxNod
       JSON.stringify(arity.parameterTypes),
     );
   }
+  // Argument-label sidecar — drives Swift same-arity/same-type overload
+  // narrowing (`find(id:)` vs `find(name:)`). Only emitted when at least one
+  // parameter carries a non-empty external label.
+  if (arity.parameterLabels !== undefined && arity.parameterLabels.some((l) => l !== '')) {
+    grouped['@declaration.parameter-labels'] = syntheticCapture(
+      '@declaration.parameter-labels',
+      fnNode,
+      JSON.stringify(arity.parameterLabels),
+    );
+  }
+}
+
+/** Collect per-argument external labels from a call's
+ *  `call_suffix > value_arguments > value_argument` list. A `value_argument`
+ *  writes its label as a `simple_identifier` child immediately followed by a
+ *  `:` token (`find(id: "42")`); an unlabeled positional argument yields `''`.
+ *  Order matches `countCallArguments`, so `argumentLabels[i]` aligns with the
+ *  i-th positional argument. Returns `[]` when the call has no parenthesized
+ *  arguments (e.g. a trailing-closure-only call). */
+function collectCallArgumentLabels(callNode: SyntaxNode): string[] {
+  for (let i = 0; i < callNode.namedChildCount; i++) {
+    const child = callNode.namedChild(i);
+    if (child === null || child.type !== 'call_suffix') continue;
+    for (let j = 0; j < child.namedChildCount; j++) {
+      const va = child.namedChild(j);
+      if (va === null || va.type !== 'value_arguments') continue;
+      const labels: string[] = [];
+      for (let k = 0; k < va.namedChildCount; k++) {
+        const arg = va.namedChild(k);
+        if (arg === null || arg.type !== 'value_argument') continue;
+        labels.push(swiftValueArgumentLabel(arg));
+      }
+      return labels;
+    }
+  }
+  return [];
+}
+
+/** Extract the external label of a single `value_argument`, or `''` when the
+ *  argument is positional. tree-sitter-swift models a labeled argument as a
+ *  `value_argument_label` child under the `name` field (`find(id: 42)` →
+ *  `id`); positional arguments have no `name` field. */
+function swiftValueArgumentLabel(arg: SyntaxNode): string {
+  const named = arg.childForFieldName('name');
+  return named !== null ? named.text : '';
 }
 
 /** Count call arguments: the `value_argument` named children of the

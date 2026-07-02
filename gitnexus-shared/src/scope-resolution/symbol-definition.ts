@@ -39,6 +39,12 @@ export interface SymbolDefinition {
   /** Per-parameter type names for overload disambiguation (e.g. ['int', 'String']).
    *  Populated when parameter types are resolvable from AST (any typed language). */
   parameterTypes?: string[];
+  /** Per-parameter external/call-site labels for languages with argument labels
+   *  (Swift `func find(id:)` vs `func find(name:)`). One entry per formal
+   *  parameter; an empty-string entry means the label is omitted (`_`). Absent
+   *  for languages without argument labels, so it never participates in
+   *  overload narrowing or node identity for them. */
+  parameterLabels?: string[];
   /** Additive per-parameter type shape sidecar for languages that need cv/ref/pointer distinctions.
    *  Does not participate in graph node identity unless a resolver explicitly opts in. */
   parameterTypeClasses?: ParameterTypeClass[];

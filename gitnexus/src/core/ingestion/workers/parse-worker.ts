@@ -115,6 +115,7 @@ import {
   arityForIdFromInfo,
   typeTagForId,
   constTagForId,
+  labelTagForId,
   buildCollisionGroups,
   parameterShapeIdTag,
 } from '../utils/method-props.js';
@@ -2096,6 +2097,11 @@ const processFileGroup = (
           groups,
         );
         arityTag += constTagForId(defMethodMap, nodeName, arityForId, defMethodInfo, groups);
+        // Argument-label discriminator (Swift): separates same-arity same-type
+        // overloads that differ only by external labels (`find(id:)` vs
+        // `find(name:)`). No-op ('') for label-less languages, so their node
+        // IDs stay byte-stable.
+        arityTag += labelTagForId(defMethodMap, nodeName, arityForId, defMethodInfo, groups);
       }
       const parameterShapeTag =
         nodeLabel === 'Function' || nodeLabel === 'Method'
