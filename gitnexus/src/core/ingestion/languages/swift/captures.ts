@@ -365,8 +365,7 @@ function synthesizeSwiftClosureReceiverBindings(root: SyntaxNode): CaptureMatch[
     const receiver = callee.firstNamedChild;
     if (receiver === null || receiver.type !== 'simple_identifier') return;
     const suffix = callee.lastNamedChild;
-    const member =
-      suffix?.type === 'navigation_suffix' ? suffix.lastNamedChild?.text : undefined;
+    const member = suffix?.type === 'navigation_suffix' ? suffix.lastNamedChild?.text : undefined;
     if (member === undefined || !COLLECTION_CLOSURE_METHODS.has(member)) return;
 
     const callSuffix = findChild(node, 'call_suffix');
@@ -379,8 +378,7 @@ function synthesizeSwiftClosureReceiverBindings(root: SyntaxNode): CaptureMatch[
     const collectionType = collectionTypeNode.text;
 
     const paramNames = swiftLambdaParameterNames(lambda);
-    const names =
-      paramNames.length > 0 ? paramNames : lambda.text.includes('$0') ? ['$0'] : [];
+    const names = paramNames.length > 0 ? paramNames : lambda.text.includes('$0') ? ['$0'] : [];
     for (const name of names) {
       out.push(swiftTypeBindingAlias(lambda, name, collectionType));
     }
@@ -523,7 +521,9 @@ function synthesizeSwiftPatternBindings(root: SyntaxNode): CaptureMatch[] {
       if (names.length < 2) return; // single binding isn't tuple destructuring
       const elems = swiftTupleElementTypes(value.text, node);
       if (elems === null) return;
-      names.slice(0, elems.length).forEach((n, i) => out.push(swiftTypeBindingAlias(node, n, elems[i])));
+      names
+        .slice(0, elems.length)
+        .forEach((n, i) => out.push(swiftTypeBindingAlias(node, n, elems[i])));
     } else if (node.type === 'switch_entry') {
       // `case let (a, b):` over a tuple-typed switch subject.
       const switchNode = swiftEnclosingOfType(node, 'switch_statement');
@@ -533,7 +533,9 @@ function synthesizeSwiftPatternBindings(root: SyntaxNode): CaptureMatch[] {
       const elems = swiftTupleElementTypes(subject.text, node);
       if (elems === null) return;
       const names = collectSwiftPatternIdentifiers(findDescendant(node, 'switch_pattern'));
-      names.slice(0, elems.length).forEach((n, i) => out.push(swiftTypeBindingAlias(node, n, elems[i])));
+      names
+        .slice(0, elems.length)
+        .forEach((n, i) => out.push(swiftTypeBindingAlias(node, n, elems[i])));
     } else if (node.type === 'while_statement') {
       // `while let x = iterator.next()` — bind x to the iterator's element.
       let sawLet = false;

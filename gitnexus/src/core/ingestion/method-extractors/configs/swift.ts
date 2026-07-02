@@ -299,7 +299,11 @@ export const swiftMethodConfig: MethodExtractionConfig = {
 
   // function_declaration for class/struct methods, protocol_function_declaration for protocol methods,
   // subscript_declaration for `subscript(...) -> T` accessors (modeled as a callable member "subscript").
-  methodNodeTypes: ['function_declaration', 'protocol_function_declaration', 'subscript_declaration'],
+  methodNodeTypes: [
+    'function_declaration',
+    'protocol_function_declaration',
+    'subscript_declaration',
+  ],
 
   // class_body for class/struct/extension/actor, protocol_body for protocols,
   // enum_class_body for enums (F79). Without enum_class_body the factory only

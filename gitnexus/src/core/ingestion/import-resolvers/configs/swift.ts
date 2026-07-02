@@ -87,9 +87,10 @@ function getSwiftTargetIndex(
  * `Models.User` (an `import struct Models.User` decl-import) →
  * `{ moduleName: 'Models', declarationName: 'User' }`.
  */
-function splitSwiftImportPath(
-  rawImportPath: string,
-): { moduleName: string; declarationName: string | null } {
+function splitSwiftImportPath(rawImportPath: string): {
+  moduleName: string;
+  declarationName: string | null;
+} {
   const parts = rawImportPath.split('.').filter(Boolean);
   return {
     moduleName: parts[0] ?? rawImportPath,
@@ -123,8 +124,7 @@ export const swiftPackageStrategy: ImportResolverStrategy = (rawImportPath, _fil
           // basename matches the declaration (case-sensitive). The per-target
           // bucket order follows `allFileList`, so ordering is preserved.
           const narrowed = files.filter(
-            (file) =>
-              swiftBasenameWithoutExtension(file.replace(/\\/g, '/')) === declarationName,
+            (file) => swiftBasenameWithoutExtension(file.replace(/\\/g, '/')) === declarationName,
           );
           return narrowed.length > 0 ? { kind: 'files', files: narrowed } : null;
         }

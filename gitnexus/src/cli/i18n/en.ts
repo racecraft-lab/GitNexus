@@ -202,8 +202,7 @@ export const en = {
   'help.option.analyze.embeddingDevice': 'Embedding device: auto, cpu, dml, cuda, or wasm',
   'help.option.analyze.enrichClusters':
     'Opt in to LLM-generated semantic names and summaries for community clusters',
-  'help.option.analyze.clusterEnrichmentBatchSize':
-    'Number of clusters per enrichment LLM call',
+  'help.option.analyze.clusterEnrichmentBatchSize': 'Number of clusters per enrichment LLM call',
   'help.option.index.force': 'Register even if meta.json is missing (stats will be empty)',
   'help.option.index.allowNonGit': 'Allow registering folders that are not Git repositories',
   'help.option.port': 'Port number',

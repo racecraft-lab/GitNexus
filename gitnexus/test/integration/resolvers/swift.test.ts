@@ -1375,57 +1375,54 @@ describe.skipIf(!swiftAvailable)('Swift enum members (F79)', () => {
 // stripped (registry-primary-flag.ts was removed upstream — resolution is always
 // registry-based now). Fixture: swift-assignment-nullable-write.
 // ---------------------------------------------------------------------------
-describe.skipIf(!swiftAvailable)(
-  'Swift assignment aliases, optional chaining, and writes',
-  () => {
-    let result: PipelineResult;
+describe.skipIf(!swiftAvailable)('Swift assignment aliases, optional chaining, and writes', () => {
+  let result: PipelineResult;
 
-    beforeAll(async () => {
-      result = await runPipelineFromRepo(
-        path.join(FIXTURES, 'swift-assignment-nullable-write'),
-        () => {},
-      );
-    }, 60000);
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'swift-assignment-nullable-write'),
+      () => {},
+    );
+  }, 60000);
 
-    // NOTE (stream-4a): the fork's `resolves direct assignment aliases through
-    // multiple hops` assertion (>=2 saves via `second = alias = user`) is NOT
-    // ported — transitive alias-of-alias chasing is a shared scope-resolution
-    // engine behavior (out of stream-4a ownership) and the fork only proved it in
-    // the legacy path (this block was `!swiftRegistryPrimary`-guarded). Single-hop
-    // alias + call-result binding is covered by `Swift call-result binding`.
+  // NOTE (stream-4a): the fork's `resolves direct assignment aliases through
+  // multiple hops` assertion (>=2 saves via `second = alias = user`) is NOT
+  // ported — transitive alias-of-alias chasing is a shared scope-resolution
+  // engine behavior (out of stream-4a ownership) and the fork only proved it in
+  // the legacy path (this block was `!swiftRegistryPrimary`-guarded). Single-hop
+  // alias + call-result binding is covered by `Swift call-result binding`.
 
-    it('resolves optional-chain member calls from the wrapped receiver type', () => {
-      const calls = getRelationships(result, 'CALLS');
-      const saveCall = calls.find((c) => c.source === 'processOptional' && c.target === 'save');
-      expect(saveCall).toBeDefined();
-      expect(saveCall!.targetFilePath).toBe('Models.swift');
-    });
+  it('resolves optional-chain member calls from the wrapped receiver type', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const saveCall = calls.find((c) => c.source === 'processOptional' && c.target === 'save');
+    expect(saveCall).toBeDefined();
+    expect(saveCall!.targetFilePath).toBe('Models.swift');
+  });
 
-    it('resolves direct call-result chains without an intermediate variable', () => {
-      const calls = getRelationships(result, 'CALLS');
-      const saveCall = calls.find((c) => c.source === 'processDirectChain' && c.target === 'save');
-      expect(saveCall).toBeDefined();
-      expect(saveCall!.targetFilePath).toBe('Models.swift');
-    });
+  it('resolves direct call-result chains without an intermediate variable', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const saveCall = calls.find((c) => c.source === 'processDirectChain' && c.target === 'save');
+    expect(saveCall).toBeDefined();
+    expect(saveCall!.targetFilePath).toBe('Models.swift');
+  });
 
-    it('resolves super.member() to inherited Swift members', () => {
-      const calls = getRelationships(result, 'CALLS');
-      const inheritedCall = calls.find(
-        (c) => c.source === 'processSuper' && c.target === 'inheritedSave',
-      );
-      expect(inheritedCall).toBeDefined();
-      expect(inheritedCall!.targetFilePath).toBe('Models.swift');
-    });
+  it('resolves super.member() to inherited Swift members', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const inheritedCall = calls.find(
+      (c) => c.source === 'processSuper' && c.target === 'inheritedSave',
+    );
+    expect(inheritedCall).toBeDefined();
+    expect(inheritedCall!.targetFilePath).toBe('Models.swift');
+  });
 
-    it('emits write ACCESSES edges for Swift field assignments', () => {
-      const accesses = getRelationships(result, 'ACCESSES');
-      const writes = accesses.filter((e) => e.rel.reason === 'write');
-      const nameWrite = writes.find((e) => e.source === 'processAliases' && e.target === 'name');
-      expect(nameWrite).toBeDefined();
-      expect(nameWrite!.rel.confidence).toBe(1.0);
-    });
-  },
-);
+  it('emits write ACCESSES edges for Swift field assignments', () => {
+    const accesses = getRelationships(result, 'ACCESSES');
+    const writes = accesses.filter((e) => e.rel.reason === 'write');
+    const nameWrite = writes.find((e) => e.source === 'processAliases' && e.target === 'name');
+    expect(nameWrite).toBeDefined();
+    expect(nameWrite!.rel.confidence).toBe(1.0);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // SwiftPM custom target paths and dependencies (fixture: swift-package-custom-targets).
@@ -1444,7 +1441,8 @@ describe.skipIf(!swiftAvailable)('SwiftPM custom target paths and dependencies',
   it('resolves an import from a custom executable target path to its custom library target path', () => {
     const calls = getRelationships(result, 'CALLS');
     const factoryCall = calls.find(
-      (c) => c.target === 'makeCoreService' && c.targetFilePath === 'Modules/Core/CoreService.swift',
+      (c) =>
+        c.target === 'makeCoreService' && c.targetFilePath === 'Modules/Core/CoreService.swift',
     );
     expect(factoryCall).toBeDefined();
   });

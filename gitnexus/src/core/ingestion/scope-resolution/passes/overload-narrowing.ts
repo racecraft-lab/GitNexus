@@ -159,7 +159,9 @@ export function narrowOverloadCandidates(
   // signal must never wrongly empty the set and suppress a real edge).
   const argLabels = hookCtx?.argumentLabels;
   if (argLabels !== undefined && argLabels.some((l) => l !== '')) {
-    const labelMatched = candidates.filter((d) => argumentLabelsMatch(argLabels, d.parameterLabels));
+    const labelMatched = candidates.filter((d) =>
+      argumentLabelsMatch(argLabels, d.parameterLabels),
+    );
     if (labelMatched.length > 0) candidates = labelMatched;
   }
 
