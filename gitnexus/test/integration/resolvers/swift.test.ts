@@ -1553,6 +1553,23 @@ describe.skipIf(!swiftAvailable)('Swift argument-label overloads', () => {
     // at file line 6 (`startLine` is 0-indexed).
     expect(targetNode?.properties.startLine).toBe(1);
   });
+
+  it('resolves a fully-unlabeled implicit-`this` call (no explicit receiver) against the unlabeled overload', () => {
+    // Same ambiguity as the explicit-receiver case above, but via the
+    // free-call-fallback path (`pickImplicitThisOverload`) — a bare
+    // `find("x")` called from inside a sibling method, with no `self.`/
+    // explicit receiver at all.
+    const calls = getRelationships(result, 'CALLS');
+    const implicitFindCalls = calls.filter(
+      (c) => c.source === 'runImplicit' && c.target === 'find',
+    );
+    // Single, unambiguous CALL edge — not OVERLOAD_AMBIGUOUS-suppressed.
+    expect(implicitFindCalls.length).toBe(1);
+    const targetNode = result.graph.getNode(implicitFindCalls[0].rel.targetId);
+    // The resolved def must be `find(_ raw:)` at file line 2, not `find(id:)`
+    // at file line 6 (`startLine` is 0-indexed).
+    expect(targetNode?.properties.startLine).toBe(1);
+  });
 });
 
 describe.skipIf(!swiftAvailable)('Swift module visibility', () => {

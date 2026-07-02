@@ -829,6 +829,11 @@ export function pickImplicitThisOverload(
     readonly arity?: number;
     readonly argumentTypes?: readonly string[];
     readonly argumentTypeClasses?: readonly import('gitnexus-shared').ParameterTypeClass[];
+    /** Call-site external argument labels (Swift). See
+     *  `OverloadNarrowingHookCtx.argumentLabels` — threaded through so an
+     *  implicit-`this` free call (e.g. bare `find("x")` from a sibling
+     *  method) engages the same label axis as an explicit-receiver call. */
+    readonly argumentLabels?: readonly string[];
   },
   scopes: ScopeResolutionIndexes,
   workspaceIndex: WorkspaceResolutionIndex,
@@ -867,6 +872,7 @@ export function pickImplicitThisOverload(
   // routing to an arbitrary first overload by registration order.
   const candidates = narrowOverloadCandidates(overloads, site.arity, site.argumentTypes, {
     argumentTypeClasses: site.argumentTypeClasses,
+    argumentLabels: site.argumentLabels,
     conversionRankFn: hookCtx?.conversionRankFn,
     conversionOnlyArgTypePrefixes: hookCtx?.conversionOnlyArgTypePrefixes,
     constraintCompatibility: hookCtx?.constraintCompatibility,
