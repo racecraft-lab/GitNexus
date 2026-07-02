@@ -30,6 +30,10 @@ const SWIFT_VIS = new Set<MethodVisibility>([
  * (not a 'name' field) on both function_declaration and protocol_function_declaration.
  */
 function extractSwiftName(node: SyntaxNode): string | undefined {
+  // A `subscript_declaration` has no name — its grammar `name:` field is the
+  // return type. Model it as a callable member named "subscript".
+  if (node.type === 'subscript_declaration') return 'subscript';
+
   // Try field-based name first
   const nameField = node.childForFieldName('name');
   if (nameField) return nameField.text;
@@ -95,6 +99,25 @@ function extractSwiftReturnType(node: SyntaxNode): string | undefined {
   }
 
   return undefined;
+}
+
+/**
+ * Extract a Swift parameter's external (call-site) label.
+ *
+ * A `parameter` node carries one or two `simple_identifier` children: with two,
+ * the first is the external label and the second the internal name
+ * (`func f(to name: String)` → label `to`); with one, the same identifier serves
+ * as both (`func f(name: String)` → label `name`). A leading `_`
+ * (`func f(_ name: String)`) means the label is omitted → empty string.
+ */
+function swiftExternalParameterLabel(node: SyntaxNode): string {
+  const names: string[] = [];
+  for (let i = 0; i < node.namedChildCount; i++) {
+    const part = node.namedChild(i);
+    if (part?.type === 'simple_identifier') names.push(part.text);
+  }
+  if (names.length === 0) return '';
+  return names[0] === '_' ? '' : names[0]!;
 }
 
 /**
@@ -169,6 +192,7 @@ function extractSwiftParameters(node: SyntaxNode): ParameterInfo[] {
 
     params.push({
       name: paramName,
+      label: swiftExternalParameterLabel(child),
       type: typeName,
       rawType: rawTypeName,
       isOptional,
@@ -273,8 +297,9 @@ export const swiftMethodConfig: MethodExtractionConfig = {
   // protocol_declaration is a separate, confirmed node type.
   typeDeclarationNodes: ['class_declaration', 'protocol_declaration'],
 
-  // function_declaration for class/struct methods, protocol_function_declaration for protocol methods
-  methodNodeTypes: ['function_declaration', 'protocol_function_declaration'],
+  // function_declaration for class/struct methods, protocol_function_declaration for protocol methods,
+  // subscript_declaration for `subscript(...) -> T` accessors (modeled as a callable member "subscript").
+  methodNodeTypes: ['function_declaration', 'protocol_function_declaration', 'subscript_declaration'],
 
   // class_body for class/struct/extension/actor, protocol_body for protocols,
   // enum_class_body for enums (F79). Without enum_class_body the factory only

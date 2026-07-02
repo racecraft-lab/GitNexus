@@ -66,6 +66,7 @@ import {
   mirrorSwiftSiblingTypeBindings,
   type SwiftResolveContext,
 } from './index.js';
+import { swiftIsCallableVisibleFromCaller } from './visibility.js';
 
 const ZERO_RANGE = { startLine: 0, startCol: 0, endLine: 0, endCol: 0 } as const;
 
@@ -136,6 +137,13 @@ const swiftScopeResolver: ScopeResolver = {
   // global free-call fallback (as Python/Go/Ruby/COBOL do for the same
   // no-`new` constructor + cross-file free-call shape).
   allowGlobalFreeCallFallback: true,
+
+  // Swift access control is MODULE-scoped: a `public` symbol is reachable
+  // from any importing target, but `internal` (default) / `private` /
+  // `fileprivate` are NOT exported across an SPM-target boundary to a normal
+  // importer (only a `@testable import` exposes `internal`). Gates the
+  // free-call fallback so cross-module non-public helpers don't resolve.
+  isCallableVisibleFromCaller: swiftIsCallableVisibleFromCaller,
 
   // Swift's call graph models `Type(...)` as a reference to the type
   // itself, not its `init` — both the legacy DAG and this test suite link

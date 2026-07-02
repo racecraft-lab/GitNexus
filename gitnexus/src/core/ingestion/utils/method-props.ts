@@ -91,6 +91,46 @@ export function typeTagForId(
   return `~${types.join(',')}`;
 }
 
+/**
+ * Compute an argument-label discriminator suffix for same-arity overloads that
+ * differ ONLY by external parameter labels (Swift `func find(id:)` vs
+ * `func find(name:)` — same name, same arity, same parameter TYPES, so
+ * `typeTagForId` cannot separate them and they would otherwise collapse to a
+ * single graph node).
+ *
+ * Returns `~L<labels>` for the current method when its same-name+same-arity
+ * collision group has ≥2 members whose label signatures are NOT all identical.
+ * Returns `''` otherwise: single overloads, languages without argument labels
+ * (all labels empty), and genuine same-label duplicates all keep their existing
+ * byte-stable node IDs. Deliberately narrow so only label-overloaded callables
+ * acquire a new ID shape.
+ */
+export function labelTagForId(
+  methodMap: Map<string, MethodInfo>,
+  methodName: string,
+  arity: number | undefined,
+  currentInfo: MethodInfo,
+  collisionGroups?: Map<string, MethodInfo[]>,
+): string {
+  if (arity === undefined || arity === 0) return '';
+
+  const currentLabels = currentInfo.parameters.map((p) => p.label ?? '');
+  // No labels at all → label-less language; never perturb its IDs.
+  if (currentLabels.every((l) => l === '')) return '';
+
+  const groupKey = `${methodName}#${arity}`;
+  const group = collisionGroups?.get(groupKey) ?? _buildGroup(methodMap, methodName, arity);
+  if (group.length < 2) return '';
+
+  const currentSig = currentLabels.join(',');
+  const allSame = group.every(
+    (info) => info.parameters.map((p) => p.label ?? '').join(',') === currentSig,
+  );
+  if (allSame) return '';
+
+  return `~L${currentSig}`;
+}
+
 /** Fallback: build a same-arity group by scanning the full map (O(N)). */
 function _buildGroup(
   methodMap: Map<string, MethodInfo>,
@@ -186,6 +226,8 @@ export function parameterShapeIdTag(
 export function buildMethodProps(info: MethodInfo): Record<string, unknown> {
   const types: string[] = [];
   const typeClasses: ParameterTypeClass[] = [];
+  const labels: string[] = [];
+  let hasAnyLabel = false;
   let optionalCount = 0;
   let hasVariadic = false;
   for (const p of info.parameters) {
@@ -193,6 +235,12 @@ export function buildMethodProps(info: MethodInfo): Record<string, unknown> {
     if (p.typeClass !== undefined) typeClasses.push(p.typeClass);
     if (p.isOptional) optionalCount++;
     if (p.isVariadic) hasVariadic = true;
+    if (p.label !== undefined && p.label !== null) {
+      labels.push(p.label);
+      if (p.label !== '') hasAnyLabel = true;
+    } else {
+      labels.push('');
+    }
   }
   return {
     parameterCount: hasVariadic ? undefined : info.parameters.length,
@@ -200,6 +248,10 @@ export function buildMethodProps(info: MethodInfo): Record<string, unknown> {
       ? { requiredParameterCount: info.parameters.length - optionalCount }
       : {}),
     ...(types.length > 0 ? { parameterTypes: types } : {}),
+    // Argument-label sidecar — only for languages that actually assign labels
+    // (Swift). Absent otherwise so label-less languages keep byte-identical
+    // node properties.
+    ...(hasAnyLabel ? { parameterLabels: labels } : {}),
     ...(typeClasses.length === info.parameters.length && typeClasses.length > 0
       ? { parameterTypeClasses: typeClasses }
       : {}),

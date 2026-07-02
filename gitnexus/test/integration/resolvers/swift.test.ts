@@ -646,6 +646,17 @@ describe.skipIf(!swiftAvailable)('Swift method enrichment', () => {
     expect(breathe!.properties.annotations).toContain('@objc');
   });
 
+  it('captures Swift attributes with arguments as function annotations', () => {
+    // `extractSwiftAnnotations` strips attribute arguments (`@available(macOS 14, *)`
+    // -> `@available`), so the assertion is on the normalized attribute name — the
+    // upstream shape. startLine 5 (0-indexed) is the Dog.speak impl, not the
+    // protocol `speak` declaration.
+    const methods = getNodesByLabelFull(result, 'Function');
+    const speak = methods.find((n) => n.name === 'speak' && n.properties.startLine === 5);
+    expect(speak).toBeDefined();
+    expect(speak!.properties.annotations).toContain('@available');
+  });
+
   it('populates parameterTypes for classify(_ name: String)', () => {
     const methods = getNodesByLabelFull(result, 'Function');
     const classify = methods.find((n) => n.name === 'classify');
@@ -1355,5 +1366,275 @@ describe.skipIf(!swiftAvailable)('Swift enum members (F79)', () => {
     const hasMethod = getRelationships(result, 'HAS_METHOD');
     const headingEdges = hasMethod.filter((e) => e.target === 'heading' && e.source === 'Compass');
     expect(headingEdges).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Assignment aliases, optional chaining, super.member, and write ACCESSES.
+// Ported from the fork (stream-4a CAT-A'): the `!swiftRegistryPrimary` guard was
+// stripped (registry-primary-flag.ts was removed upstream — resolution is always
+// registry-based now). Fixture: swift-assignment-nullable-write.
+// ---------------------------------------------------------------------------
+describe.skipIf(!swiftAvailable)(
+  'Swift assignment aliases, optional chaining, and writes',
+  () => {
+    let result: PipelineResult;
+
+    beforeAll(async () => {
+      result = await runPipelineFromRepo(
+        path.join(FIXTURES, 'swift-assignment-nullable-write'),
+        () => {},
+      );
+    }, 60000);
+
+    // NOTE (stream-4a): the fork's `resolves direct assignment aliases through
+    // multiple hops` assertion (>=2 saves via `second = alias = user`) is NOT
+    // ported — transitive alias-of-alias chasing is a shared scope-resolution
+    // engine behavior (out of stream-4a ownership) and the fork only proved it in
+    // the legacy path (this block was `!swiftRegistryPrimary`-guarded). Single-hop
+    // alias + call-result binding is covered by `Swift call-result binding`.
+
+    it('resolves optional-chain member calls from the wrapped receiver type', () => {
+      const calls = getRelationships(result, 'CALLS');
+      const saveCall = calls.find((c) => c.source === 'processOptional' && c.target === 'save');
+      expect(saveCall).toBeDefined();
+      expect(saveCall!.targetFilePath).toBe('Models.swift');
+    });
+
+    it('resolves direct call-result chains without an intermediate variable', () => {
+      const calls = getRelationships(result, 'CALLS');
+      const saveCall = calls.find((c) => c.source === 'processDirectChain' && c.target === 'save');
+      expect(saveCall).toBeDefined();
+      expect(saveCall!.targetFilePath).toBe('Models.swift');
+    });
+
+    it('resolves super.member() to inherited Swift members', () => {
+      const calls = getRelationships(result, 'CALLS');
+      const inheritedCall = calls.find(
+        (c) => c.source === 'processSuper' && c.target === 'inheritedSave',
+      );
+      expect(inheritedCall).toBeDefined();
+      expect(inheritedCall!.targetFilePath).toBe('Models.swift');
+    });
+
+    it('emits write ACCESSES edges for Swift field assignments', () => {
+      const accesses = getRelationships(result, 'ACCESSES');
+      const writes = accesses.filter((e) => e.rel.reason === 'write');
+      const nameWrite = writes.find((e) => e.source === 'processAliases' && e.target === 'name');
+      expect(nameWrite).toBeDefined();
+      expect(nameWrite!.rel.confidence).toBe(1.0);
+    });
+  },
+);
+
+// ---------------------------------------------------------------------------
+// SwiftPM custom target paths and dependencies (fixture: swift-package-custom-targets).
+// Ported from the fork (stream-4a CAT-A'); `!swiftRegistryPrimary` guard stripped.
+// ---------------------------------------------------------------------------
+describe.skipIf(!swiftAvailable)('SwiftPM custom target paths and dependencies', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'swift-package-custom-targets'),
+      () => {},
+    );
+  }, 60000);
+
+  it('resolves an import from a custom executable target path to its custom library target path', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const factoryCall = calls.find(
+      (c) => c.target === 'makeCoreService' && c.targetFilePath === 'Modules/Core/CoreService.swift',
+    );
+    expect(factoryCall).toBeDefined();
+  });
+
+  // NOTE (stream-4a): the fork's `resolves member calls through the imported
+  // custom-path target` assertion (`service.runCore()` via the return type of an
+  // imported `makeCoreService()`) is NOT ported — cross-module return-type
+  // propagation (`propagateImportedReturnTypes`) is a shared scope-resolution
+  // engine behavior (out of stream-4a ownership) and was legacy-only in the fork
+  // (`!swiftRegistryPrimary`-guarded). The custom-path IMPORT itself resolves,
+  // proven by the free-function `makeCoreService` edge above.
+});
+
+// ---------------------------------------------------------------------------
+// Declaration shapes: associatedtype -> TypeAlias, subscript -> callable member,
+// actor constructor inference. Ported from the fork (stream-4a CAT-B #7/#8);
+// `!swiftRegistryPrimary` guard stripped. Fixture: swift-declaration-shapes.
+// ---------------------------------------------------------------------------
+describe.skipIf(!swiftAvailable)('Swift declaration shapes', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'swift-declaration-shapes'), () => {});
+  }, 60000);
+
+  it('models associatedtype declarations as type aliases', () => {
+    const aliases = getNodesByLabel(result, 'TypeAlias');
+    expect(aliases).toContain('Entity');
+  });
+
+  it('models subscript declarations as callable members', () => {
+    const functions = getNodesByLabelFull(result, 'Function');
+    const methods = getNodesByLabelFull(result, 'Method');
+    const subscripts = [...functions, ...methods].filter((n) => n.name === 'subscript');
+    expect(subscripts.length).toBeGreaterThan(0);
+  });
+
+  it('keeps actor methods resolvable through actor constructor inference', () => {
+    const classes = getNodesByLabel(result, 'Class');
+    expect(classes).toContain('Cache');
+    const calls = getRelationships(result, 'CALLS');
+    expect(calls.find((c) => c.source === 'runCache' && c.target === 'store')).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// deinit modeled as a callable class member; same-class cleanup() call inside a
+// deinit body attributes to it. Ported from the fork's first-class-gaps describe
+// (stream-4a CAT-B #9), isolated here. Fixture: swift-first-class-gaps.
+// ---------------------------------------------------------------------------
+describe.skipIf(!swiftAvailable)('Swift deinit as callable member', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'swift-first-class-gaps'), () => {});
+  }, 60000);
+
+  it('models deinit as a callable class member', () => {
+    const constructors = getNodesByLabelFull(result, 'Constructor');
+    expect(
+      constructors.find(
+        (n) => n.name === 'deinit' && n.properties.filePath === 'Sources/AvailableKit/Models.swift',
+      ),
+    ).toBeDefined();
+    // NOTE (stream-4a): the fork additionally asserted the `cleanup()` call inside
+    // the deinit body attributes to source `deinit`. In the registry path that call
+    // attributes to the enclosing CLASS (`CleanupOwner`) — constructor-kind scopes
+    // aren't treated as call-source owners by the shared resolver (out of stream-4a
+    // ownership). The deinit NODE modeling itself works and is asserted above.
+  });
+});
+
+describe.skipIf(!swiftAvailable)('Swift argument-label overloads', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'swift-label-overload'), () => {});
+  }, 60000);
+
+  it('keeps same-arity same-type overload declarations separate by external label', () => {
+    const functions = getNodesByLabelFull(result, 'Function');
+    const finds = functions.filter(
+      (n) => n.name === 'find' && n.properties.filePath === 'Lookup.swift',
+    );
+    expect(finds.length).toBe(2);
+    expect(finds.map((n) => n.properties.parameterLabels).sort()).toEqual([['id'], ['name']]);
+  });
+
+  it('resolves both same-type label overload call sites', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const findCalls = calls.filter((c) => c.source === 'runLookup' && c.target === 'find');
+    expect(findCalls.length).toBe(2);
+  });
+
+  it('counts a trailing closure as an argument and resolves the call body receiver', () => {
+    const calls = getRelationships(result, 'CALLS');
+    expect(calls.find((c) => c.source === 'runLookup' && c.target === 'perform')).toBeDefined();
+    expect(calls.find((c) => c.source === 'runLookup' && c.target === 'finish')).toBeDefined();
+  });
+});
+
+describe.skipIf(!swiftAvailable)('Swift module visibility', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'swift-module-visibility'), () => {});
+  }, 60000);
+
+  it('exports public symbols to an importing target', () => {
+    const calls = getRelationships(result, 'CALLS');
+    expect(
+      calls.find(
+        (c) => c.target === 'publicHelper' && c.targetFilePath === 'Sources/Models/API.swift',
+      ),
+    ).toBeDefined();
+    expect(
+      calls.find((c) => c.target === 'doWork' && c.targetFilePath === 'Sources/Models/API.swift'),
+    ).toBeDefined();
+  });
+
+  it('does not export internal or private helpers to a normal importing target', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const appCalls = calls.filter((c) => c.source === 'runApp');
+    expect(appCalls.find((c) => c.target === 'internalHelper')).toBeUndefined();
+    expect(appCalls.find((c) => c.target === 'secretHelper')).toBeUndefined();
+    expect(appCalls.find((c) => c.target === 'fileOnlyHelper')).toBeUndefined();
+  });
+
+  it('allows @testable import to resolve internal helpers without exposing private helpers', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const testInternalCall = calls.find(
+      (c) =>
+        c.source === 'runTests' &&
+        c.target === 'internalHelper' &&
+        c.targetFilePath === 'Sources/Models/API.swift',
+    );
+    expect(testInternalCall).toBeDefined();
+    expect(
+      calls.find((c) => c.source === 'runTests' && c.target === 'secretHelper'),
+    ).toBeUndefined();
+  });
+});
+
+// Ported from fork (15cfd158) `Swift closure-local receiver inference` describe.
+// Fork guarded on `!swiftRegistryPrimary` (registry flag removed upstream, #942);
+// stripped per the swift re-port convention. Isolated describe, single-file
+// fixture (same-file resolution — no cross-module dependency).
+describe.skipIf(!swiftAvailable)('Swift closure-local receiver inference', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'swift-closure-receiver-inference'),
+      () => {},
+    );
+  }, 60000);
+
+  it('resolves named closure parameters from collection element type', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const namedClosureCall = calls.find(
+      (c) => c.source === 'processClosures' && c.target === 'save',
+    );
+    expect(namedClosureCall).toBeDefined();
+    expect(namedClosureCall!.targetFilePath).toBe('Models.swift');
+  });
+
+  it('resolves shorthand $0 closure receivers from collection element type', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const saveCalls = calls.filter((c) => c.source === 'processClosures' && c.target === 'save');
+    expect(saveCalls.length).toBe(2);
+    expect(saveCalls.every((c) => c.targetFilePath === 'Models.swift')).toBe(true);
+  });
+});
+
+// Ported from fork (15cfd158) `Swift first-class static support edge cases`
+// describe — the pattern-receiver `it` only, as an isolated describe (the
+// other its in that fork describe cover BLOCKED shared-resolver capabilities;
+// 0-skip rule forbids porting them red). Fixture: swift-first-class-gaps.
+describe.skipIf(!swiftAvailable)('Swift pattern-receiver inference', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'swift-first-class-gaps'), () => {});
+  }, 60000);
+
+  it('resolves tuple, switch-case, and while-let pattern receiver types', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const saveCalls = calls.filter((c) => c.source === 'patternFlow' && c.target === 'save');
+    expect(
+      saveCalls.filter((c) => c.targetFilePath === 'Sources/AvailableKit/Models.swift').length,
+    ).toBeGreaterThanOrEqual(5);
   });
 });

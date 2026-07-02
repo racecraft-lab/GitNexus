@@ -109,6 +109,25 @@ export function buildGraphNodeLookup(graph: KnowledgeGraph): GraphNodeLookup {
         // Each overload is unique — set unconditionally.
         if (!lookup.has(pKey)) lookup.set(pKey, node.id);
       }
+      // Argument-label-disambiguating key (Swift): same-arity same-type
+      // overloads that differ only by external parameter labels (`find(id:)`
+      // vs `find(name:)`) share the parameter-types key above, so register a
+      // label-suffixed key too. Label-less languages carry no `parameterLabels`
+      // property, so this never fires for them and their keyspace is unchanged.
+      const pLabels = (props as { parameterLabels?: readonly string[] }).parameterLabels;
+      if (
+        pLabels !== undefined &&
+        pLabels.some((l) => l !== '') &&
+        isOverloadableCallable(node.label)
+      ) {
+        const typePart = pTypes !== undefined && pTypes.length > 0 ? `~${pTypes.join(',')}` : '';
+        const lblKey = qualifiedKey(
+          props.filePath,
+          node.label,
+          `${keyQualified}${typePart}~L${pLabels.join(',')}`,
+        );
+        if (!lookup.has(lblKey)) lookup.set(lblKey, node.id);
+      }
       // Arity-disambiguating key: include the parameter count so two same-name
       // overloads of DIFFERENT arity route to distinct graph nodes even when the
       // shorter overload carries no parameter types (e.g. a Kotlin zero-arg

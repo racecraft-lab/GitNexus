@@ -39,6 +39,12 @@ export interface SymbolDefinition {
   /** Per-parameter type names for overload disambiguation (e.g. ['int', 'String']).
    *  Populated when parameter types are resolvable from AST (any typed language). */
   parameterTypes?: string[];
+  /** Per-parameter external/call-site labels for languages with argument labels
+   *  (Swift `func find(id:)` vs `func find(name:)`). One entry per formal
+   *  parameter; an empty-string entry means the label is omitted (`_`). Absent
+   *  for languages without argument labels, so it never participates in
+   *  overload narrowing or node identity for them. */
+  parameterLabels?: string[];
   /** Additive per-parameter type shape sidecar for languages that need cv/ref/pointer distinctions.
    *  Does not participate in graph node identity unless a resolver explicitly opts in. */
   parameterTypeClasses?: ParameterTypeClass[];
@@ -63,6 +69,12 @@ export interface SymbolDefinition {
    *  Unavailable callables still participate in overload selection, but a
    *  selected unavailable target must suppress edge emission. */
   isDeleted?: boolean;
+  /** Declared visibility for languages that gate cross-file/cross-module
+   *  resolution on it (Swift `public`/`internal`/`private`/`fileprivate`/
+   *  `open`/`package`). Consumed by the `isCallableVisibleFromCaller` hook.
+   *  Absent for languages that don't stamp it, in which case visibility
+   *  filtering is a no-op (all candidates visible). */
+  visibility?: string;
   /** Links Method/Constructor/Property to owning Class/Struct/Trait nodeId */
   ownerId?: string;
   /** #1982/#1993: bridge-held enclosing-namespace path (e.g. `NS1`, `Outer.Inner`)

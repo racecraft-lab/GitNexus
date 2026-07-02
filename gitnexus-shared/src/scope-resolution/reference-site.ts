@@ -104,4 +104,13 @@ export interface ReferenceSite {
    * for existing overload narrowing and conversion-rank logic.
    */
   readonly argumentTypeClasses?: readonly ParameterTypeClass[];
+  /**
+   * Optional per-argument external/call-site labels for languages with
+   * argument labels (Swift `find(id: 42)` → `['id']`). One entry per
+   * positional argument; an empty-string entry means the argument had no
+   * label (positional / trailing closure). Consumed only by the label axis
+   * in `narrowOverloadCandidates`; absent for languages without labels, so
+   * overload narrowing is unchanged for them.
+   */
+  readonly argumentLabels?: readonly string[];
 }

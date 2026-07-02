@@ -42,11 +42,16 @@ export function interpretSwiftTypeBinding(captures: CaptureMatch): ParsedTypeBin
   if (nameCap === undefined || typeCap === undefined) return null;
 
   // Normalize so receiver-typed resolution treats these identically:
-  //   `User?` / `User!`           → User   (optional / IUO)
-  //   `[User]`                    → User   (array sugar)
-  //   `Array<User>` / `Optional<User>` → User (single-arg generic)
-  //   `Foundation.URL`            → URL    (qualifier)
-  const rawType = stripQualifier(stripGeneric(stripArraySugar(stripOptional(typeCap.text.trim()))));
+  //   `User?` / `User!`                 → User   (optional / IUO)
+  //   `[User]`                          → User   (array sugar)
+  //   `Array<User>` / `Optional<User>`  → User   (single-arg generic)
+  //   `Array<Optional<User>>` / `[User?]` → User (nested single-arg wrappers,
+  //                                        unwrapped to a fixpoint)
+  //   `Foundation.URL`                  → URL    (qualifier)
+  // Multi-arg generics (`Result<T, E>`, `Dictionary<K, V>`) and dictionary
+  // literals (`[K: V]`) are DELIBERATELY left alone — element semantics aren't
+  // unambiguous (accepted upstream divergence, sync ledger §4z / CAT-B #12).
+  const rawType = normalizeSwiftTypeName(typeCap.text.trim());
 
   let source: TypeRef['source'] = 'parameter-annotation';
   if (captures['@type-binding.self'] !== undefined) source = 'self';
@@ -76,15 +81,49 @@ function stripArraySugar(text: string): string {
 /**
  * Unwrap a single-arg generic collection wrapper — `Array<User>`,
  * `Optional<User>`, `Set<User>` — to its element type. Mirrors C#'s
- * `stripGeneric`. Multi-arg generics (`Dictionary<K, V>`,
- * `Result<T, E>`) are left alone.
+ * `stripGeneric`. Multi-arg generics (`Dictionary<K, V>`, `Result<T, E>`) are
+ * left alone: the balanced inner is unwrapped only when it holds a SINGLE type
+ * argument (no top-level comma), so a nested `Array<Optional<User>>` peels one
+ * layer here and the rest resolves via the `normalizeSwiftTypeName` fixpoint.
  */
 function stripGeneric(text: string): string {
-  const single = text.match(
-    /^(?:[A-Za-z_][A-Za-z0-9_.]*\.)?(?:Array|Optional|Set|ContiguousArray|ArraySlice)<([^,<>]+)>$/,
+  const m = text.match(
+    /^(?:[A-Za-z_][A-Za-z0-9_.]*\.)?(?:Array|Optional|Set|ContiguousArray|ArraySlice)<(.+)>$/,
   );
-  if (single !== null) return single[1].trim();
-  return text;
+  if (m === null) return text;
+  const inner = m[1].trim();
+  return hasTopLevelComma(inner) ? text : inner;
+}
+
+/** True when `s` contains a comma outside every `<>` / `[]` / `()` bracket —
+ *  i.e. it holds more than one top-level type argument. */
+function hasTopLevelComma(s: string): boolean {
+  let depth = 0;
+  for (const ch of s) {
+    if (ch === '<' || ch === '[' || ch === '(') depth++;
+    else if (ch === '>' || ch === ']' || ch === ')') depth--;
+    else if (ch === ',' && depth === 0) return true;
+  }
+  return false;
+}
+
+/**
+ * Fixpoint-normalize a Swift type spelling to its receiver-resolution base by
+ * repeatedly peeling optional (`?`/`!`), array sugar (`[T]`), single-arg
+ * generic wrappers, and module qualifiers until stable. Iterating handles
+ * nested single-arg wrappers (`Array<Optional<User>>`, `[User?]`) that a single
+ * pass would leave partly wrapped. Bounded so a pathological spelling can't
+ * loop. Multi-arg generics and dictionary literals are fixed points (unchanged)
+ * by construction — see `stripGeneric` / `stripArraySugar`.
+ */
+function normalizeSwiftTypeName(text: string): string {
+  let current = text;
+  for (let i = 0; i < 8; i++) {
+    const next = stripQualifier(stripGeneric(stripArraySugar(stripOptional(current))));
+    if (next === current) break;
+    current = next;
+  }
+  return current;
 }
 
 /** `Foundation.URL` → `URL`. */

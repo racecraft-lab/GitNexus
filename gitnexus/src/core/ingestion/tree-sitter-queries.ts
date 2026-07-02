@@ -1471,6 +1471,15 @@ export const SWIFT_QUERIES = `
 ; Type aliases
 (typealias_declaration name: (type_identifier) @name) @definition.type
 
+; Associated types (protocol \`associatedtype Entity\`) — modeled as a TypeAlias,
+; mirroring how typealias is mapped above.
+(associatedtype_declaration name: (type_identifier) @name) @definition.type
+
+; Subscripts (\`subscript(...) -> T\`) — modeled as a callable member. The node
+; has no name identifier (its \`name:\` field is the RETURN type), so capture the
+; \`subscript\` keyword literal as the name.
+(subscript_declaration "subscript" @name) @definition.method
+
 ; Functions (top-level and methods)
 (function_declaration name: (simple_identifier) @name) @definition.function
 
@@ -1479,6 +1488,11 @@ export const SWIFT_QUERIES = `
 
 ; Initializers
 (init_declaration) @definition.constructor
+
+; Deinitializers — modeled as a callable class member. Like subscript, the node
+; has no name identifier, so capture the \`deinit\` keyword literal as the name
+; (a nameless @definition.constructor would default to "init" in the worker).
+(deinit_declaration "deinit" @name) @definition.constructor
 
 ; Properties (stored and computed)
 (property_declaration (pattern (simple_identifier) @name)) @definition.property

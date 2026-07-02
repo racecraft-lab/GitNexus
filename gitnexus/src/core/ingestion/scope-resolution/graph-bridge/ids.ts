@@ -114,6 +114,7 @@ export function resolveDefGraphId(
     qualifiedName?: string;
     type?: NodeLabel;
     parameterTypes?: readonly string[];
+    parameterLabels?: readonly string[];
     parameterTypeClasses?: readonly ParameterTypeClass[];
     parameterCount?: number;
     templateArguments?: readonly string[];
@@ -143,6 +144,28 @@ export function resolveDefGraphId(
       );
       const cHit = nodeLookup.get(cKey);
       if (cHit !== undefined) return cHit;
+    }
+    // Argument-label disambiguation (Swift): route a same-arity same-type
+    // overload to its own graph node by matching the def's parameter labels.
+    // Tried BEFORE the parameter-types key because both label overloads share
+    // the latter (`find~String`). No-op for label-less languages (no
+    // `parameterLabels`), preserving their resolution unchanged.
+    if (
+      isOverloadableCallable(def.type) &&
+      def.parameterLabels !== undefined &&
+      def.parameterLabels.some((l) => l !== '')
+    ) {
+      const typePart =
+        def.parameterTypes !== undefined && def.parameterTypes.length > 0
+          ? `~${def.parameterTypes.join(',')}`
+          : '';
+      const lblKey = qualifiedKey(
+        filePath,
+        def.type,
+        `${qn}${typePart}~L${def.parameterLabels.join(',')}`,
+      );
+      const lblHit = nodeLookup.get(lblKey);
+      if (lblHit !== undefined) return lblHit;
     }
     if (
       isOverloadableCallable(def.type) &&

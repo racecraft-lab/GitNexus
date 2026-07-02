@@ -80,6 +80,13 @@ export type ConversionRankFn = (
 export interface OverloadNarrowingHookCtx {
   /** Shape-preserving per-argument sidecar aligned with `argTypes`. */
   readonly argumentTypeClasses?: ConstraintContext['argumentTypeClasses'];
+  /** Call-site external argument labels, one per positional argument (Swift
+   *  `find(id: 42)` → `['id']`; an empty string means the argument had no
+   *  label). Engages the label axis: candidates whose `parameterLabels` don't
+   *  match are dropped, separating same-arity same-type overloads that differ
+   *  only by label. Absent for languages without argument labels, so narrowing
+   *  is unchanged for them. */
+  readonly argumentLabels?: readonly string[];
   /** Conversion-rank scoring fallback (step 4b). Engages when the
    *  exact-type filter rejects every candidate. */
   readonly conversionRankFn?: ConversionRankFn;
@@ -140,8 +147,21 @@ export function narrowOverloadCandidates(
   const anyUnknownBounds = overloads.some(
     (d) => d.parameterCount === undefined && d.requiredParameterCount === undefined,
   );
-  const candidates: readonly SymbolDefinition[] =
+  let candidates: readonly SymbolDefinition[] =
     arityMatches.length > 0 ? arityMatches : anyUnknownBounds ? overloads : [];
+
+  // ── Argument-label axis (Swift) ─────────────────────────────────────────
+  // When the call site carries external labels, keep only overloads whose
+  // `parameterLabels` match slot-for-slot (an empty call-site label is a
+  // positional wildcard). This separates same-arity same-type overloads that
+  // differ only by label (`find(id:)` vs `find(name:)`). Falls back to the
+  // label-agnostic set when no candidate matches (monotonicity — a bad label
+  // signal must never wrongly empty the set and suppress a real edge).
+  const argLabels = hookCtx?.argumentLabels;
+  if (argLabels !== undefined && argLabels.some((l) => l !== '')) {
+    const labelMatched = candidates.filter((d) => argumentLabelsMatch(argLabels, d.parameterLabels));
+    if (labelMatched.length > 0) candidates = labelMatched;
+  }
 
   let result: readonly SymbolDefinition[] = candidates;
   if (argTypes !== undefined && argTypes.length > 0) {
@@ -238,6 +258,25 @@ function hasConversionOnlyArgType(
 ): boolean {
   if (prefixes === undefined || prefixes.length === 0) return false;
   return argTypes.some((type) => prefixes.some((prefix) => type.startsWith(prefix)));
+}
+
+/**
+ * Slot-for-slot argument-label match. A non-empty call-site label must equal
+ * the candidate's label at the same position; an empty call-site label (a
+ * positional argument or trailing closure) matches any parameter. A candidate
+ * with no `parameterLabels` cannot satisfy a labeled call and is rejected.
+ */
+function argumentLabelsMatch(
+  argLabels: readonly string[],
+  paramLabels: readonly string[] | undefined,
+): boolean {
+  if (paramLabels === undefined) return false;
+  for (let i = 0; i < argLabels.length; i++) {
+    const label = argLabels[i];
+    if (label === '') continue;
+    if (paramLabels[i] !== label) return false;
+  }
+  return true;
 }
 
 function exactTypeSlotMatches(
