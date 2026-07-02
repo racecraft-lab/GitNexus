@@ -2,6 +2,8 @@ import type { ParsedFile, Scope, TypeRef } from 'gitnexus-shared';
 import type { ScopeResolutionIndexes } from '../../model/scope-resolution-indexes.js';
 import { getGoParser } from './query.js';
 import { getTreeSitterBufferSize } from '../../constants.js';
+import { parseSourceSafe, ParseTimeoutError } from '../../../tree-sitter/safe-parse.js';
+import { logger } from '../../../logger.js';
 
 export function populateGoRangeBindings(
   parsedFiles: readonly ParsedFile[],
@@ -17,12 +19,28 @@ export function populateGoRangeBindings(
     const sourceText = ctx.fileContents.get(parsed.filePath);
     if (sourceText === undefined) continue;
 
-    const cachedTree = ctx.treeCache?.get(parsed.filePath);
-    const tree =
-      (cachedTree as ReturnType<typeof parser.parse> | undefined) ??
-      parser.parse(sourceText, undefined, {
-        bufferSize: getTreeSitterBufferSize(sourceText),
-      });
+    const cachedTree = ctx.treeCache?.get(parsed.filePath) as
+      | ReturnType<typeof parser.parse>
+      | undefined;
+    let tree: ReturnType<typeof parser.parse>;
+    if (cachedTree !== undefined) {
+      tree = cachedTree;
+    } else {
+      try {
+        tree = parseSourceSafe(parser, sourceText, undefined, {
+          bufferSize: getTreeSitterBufferSize(sourceText),
+        });
+      } catch (err) {
+        if (err instanceof ParseTimeoutError) {
+          logger.warn(
+            { file: parsed.filePath },
+            'go range-binding: parse timed out, skipping file',
+          );
+          continue;
+        }
+        throw err;
+      }
+    }
     const moduleScope = parsed.scopes.find((s) => s.kind === 'Module');
     if (moduleScope === undefined) continue;
 
@@ -30,10 +48,10 @@ export function populateGoRangeBindings(
 
     for (const rangeNode of tree.rootNode.descendantsOfType('for_statement')) {
       const rangeClause = rangeNode.namedChildren.find((c) => c.type === 'range_clause');
-      if (rangeClause === null) continue;
+      if (rangeClause === undefined) continue;
 
       const left = rangeClause.namedChildren.find((c) => c.type === 'expression_list');
-      if (left === null) continue;
+      if (left === undefined) continue;
 
       const rangeExpr = rangeClause.namedChildren.find(
         (c, idx) => c.type !== 'expression_list' && idx > rangeClause.namedChildren.indexOf(left),
@@ -53,10 +71,12 @@ export function populateGoRangeBindings(
 
       // Resolve range expression type
       let elementType: string | null = null;
+      const functionScope = findEnclosingFunctionScope(rangeNode, scopeMap);
 
       if (rangeExpr.type === 'identifier') {
-        // Look up the identifier's type in scope typeBindings (V1: module scope only)
-        const binding = moduleScope.typeBindings.get(rangeExpr.text);
+        const binding =
+          functionScope?.typeBindings.get(rangeExpr.text) ??
+          moduleScope.typeBindings.get(rangeExpr.text);
         if (binding !== null && binding !== undefined) {
           elementType = extractElementType(binding);
         }
@@ -78,7 +98,6 @@ export function populateGoRangeBindings(
 
       if (elementType !== null && valueVar !== null) {
         // Inject type binding for the range variable onto the enclosing function scope
-        const functionScope = findEnclosingFunctionScope(rangeNode, scopeMap);
         const targetScope = functionScope ?? moduleScope;
         const mutable = targetScope.typeBindings as Map<string, TypeRef>;
         mutable.set(valueVar, {
@@ -119,7 +138,7 @@ function findEnclosingFunctionScope(
       for (const scope of scopeMap.values()) {
         if (
           scope.kind === 'Function' &&
-          scope.range.startLine === current.startPosition.row &&
+          scope.range.startLine === current.startPosition.row + 1 &&
           scope.range.startCol === current.startPosition.column
         ) {
           return scope;

@@ -1,188 +1,227 @@
-import type { GraphNode, GraphRelationship, ParsedFile } from 'gitnexus-shared';
+/**
+ * Swift `ScopeResolver` registered in `SCOPE_RESOLVERS` and consumed by
+ * the generic `runScopeResolution` orchestrator (RFC #909 Ring 3,
+ * issue #937 — the final per-language migration).
+ *
+ * Closest reference: C# (`csharpScopeResolver`) — both are OOP with
+ * classes, structs, interfaces/protocols, and explicit instance
+ * receivers. MRO follows Kotlin's shape (single superclass + multiple
+ * protocol conformance).
+ *
+ * ## Swift specifics
+ *
+ *   - **Extensions** add members to an existing type. `emitSwiftScopeCaptures`
+ *     re-keys an `extension Foo { … }` to a `class_declaration`-style def
+ *     named `Foo`, so its members land on `Foo`'s scope and the shared
+ *     `populateClassOwnedMembers` stamps them with `Foo`'s ownerId — the
+ *     same mechanism C# uses for `partial class`. No separate hoist pass.
+ *   - **Labeled arguments** narrow by ARITY only (count-primary, labels
+ *     soft) — see `arity.ts`. Label-precise dispatch is deferred to the
+ *     type-binding layer.
+ *   - **Same-module visibility**: every file in an SPM target sees its
+ *     siblings' top-level defs without an `import`. Modeled via
+ *     `populateSwiftTargetSiblings`, grouped by the SPM target *subtree*
+ *     (`Sources/<Target>/…`) via `groupSwiftFilesBySpmTarget` fed from the
+ *     `loadResolutionConfig` SPM map, mirroring Go's package siblings. With
+ *     no scanned source dir (no `Sources/`/`Package/Sources/`/`src/`) the
+ *     map is null and all files form one `__default__` module.
+ *   - **`super`** is the superclass receiver (`super.method()`); plain
+ *     `self` is the instance receiver. Both synthesized in
+ *     `receiver-binding.ts`.
+ *
+ * ## Known limitations (conscious migration trade-offs; parity gate flags
+ * anything that matters in the corpus)
+ *
+ *   1. **Protocol associated types / generic constraints** (`extension
+ *      Array where Element: Equatable`) are not narrowed — the `Self`
+ *      type of a protocol method resolves to the protocol, not the
+ *      conforming type.
+ *   2. **Cross-module `import` resolution** is still directory-segment
+ *      based (`import Foo` → files under a `Foo/` dir); explicit imports do
+ *      not yet consult the SPM target map (follow-up, tracked under #1935).
+ *      Same-target visibility (the common case) IS SPM-target-subtree
+ *      accurate — handled by sibling augmentation grouped via
+ *      `groupSwiftFilesBySpmTarget`, not by explicit imports.
+ *   3. **Operator / subscript overloads** dispatch by name only.
+ *   4. **`@_exported import` re-exports** are treated as plain imports.
+ */
+
+import type { ParsedFile } from 'gitnexus-shared';
 import { SupportedLanguages } from 'gitnexus-shared';
-import { generateId } from '../../../../lib/utils.js';
+import { loadSwiftPackageConfig } from '../../language-config.js';
 import { buildMro, defaultLinearize } from '../../scope-resolution/passes/mro.js';
-import { populateClassOwnedMembers } from '../../scope-resolution/scope/walkers.js';
+import { populateClassOwnedMembers, isClassLike } from '../../scope-resolution/scope/walkers.js';
+import { resolveDefGraphId } from '../../scope-resolution/graph-bridge/ids.js';
+import type { GraphNodeLookup } from '../../scope-resolution/graph-bridge/node-lookup.js';
+import type { KnowledgeGraph } from '../../../graph/types.js';
 import type { ScopeResolver } from '../../scope-resolution/contract/scope-resolver.js';
 import { swiftProvider } from '../swift.js';
 import {
-  loadSwiftResolutionConfig,
-  populateSwiftModuleSiblings,
-  resolveSwiftImportTarget,
   swiftArityCompatibility,
   swiftMergeBindings,
-} from './scope.js';
+  interpretSwiftImport,
+  resolveSwiftImportTarget,
+  populateSwiftTargetSiblings,
+  emitSwiftImplicitImportEdges,
+  mirrorSwiftSiblingTypeBindings,
+  type SwiftResolveContext,
+} from './index.js';
 
-export const swiftScopeResolver: ScopeResolver = {
+const ZERO_RANGE = { startLine: 0, startCol: 0, endLine: 0, endCol: 0 } as const;
+
+const swiftScopeResolver: ScopeResolver = {
   language: SupportedLanguages.Swift,
   languageProvider: swiftProvider,
   importEdgeReason: 'swift-scope: import',
 
-  resolveImportTarget: (targetRaw, fromFile, allFilePaths, resolutionConfig) =>
-    resolveSwiftImportTarget(targetRaw, fromFile, allFilePaths, resolutionConfig),
+  // Load the SPM target map (Sources/<Target>/ subtree mapping) once per
+  // workspace pass. Threaded through the orchestrator as `resolutionConfig`
+  // and consumed by the three same-module grouping hooks
+  // (`emitImplicitImportEdges`, `populateNamespaceSiblings`,
+  // `mirrorNamespaceTypeBindings`) via `coerceSwiftTargets` so they group by
+  // the SPM target subtree, not the immediate directory. Mirrors
+  // `goScopeResolver`'s `loadGoModulePath`.
+  loadResolutionConfig: (repoPath: string) => loadSwiftPackageConfig(repoPath),
 
-  loadResolutionConfig: loadSwiftResolutionConfig,
-
-  mergeBindings: (existing, incoming) => [...swiftMergeBindings([...existing, ...incoming])],
-
-  arityCompatibility: (callsite, def) => swiftArityCompatibility(def, callsite),
-
-  buildMro: (graph, parsedFiles, nodeLookup) =>
-    buildMro(graph, parsedFiles, nodeLookup, defaultLinearize),
-
-  populateOwners: (parsed: ParsedFile, parsedFiles?: readonly ParsedFile[]) => {
-    populateClassOwnedMembers(parsed);
-    mergeSwiftExtensionMembersIntoPrimaryOwners(parsed, parsedFiles ?? [parsed]);
+  resolveImportTarget: (targetRaw, fromFile, allFilePaths) => {
+    const ws: SwiftResolveContext = { fromFile, allFilePaths };
+    return resolveSwiftImportTarget(
+      interpretSwiftImport({
+        '@import.source': { name: '@import.source', text: targetRaw, range: ZERO_RANGE },
+      }) ?? { kind: 'namespace', localName: targetRaw, importedName: targetRaw, targetRaw },
+      ws,
+    );
   },
 
-  materializeDefinitions: materializeSwiftScopeOnlyDefinitions,
+  // Swift shadowing: local declarations hide imports.
+  mergeBindings: (existing, incoming) => [...swiftMergeBindings([...existing, ...incoming])],
 
+  // Adapter: swiftArityCompatibility uses (def, callsite); contract is (callsite, def).
+  arityCompatibility: (callsite, def) => swiftArityCompatibility(def, callsite),
+
+  buildMro: (graph, parsedFiles, nodeLookup) => buildSwiftMro(graph, parsedFiles, nodeLookup),
+
+  // Methods/properties/init are owned by their enclosing class/struct/
+  // extension(→extended type)/protocol. Extension members hoist for free
+  // because captures.ts re-keys the extension to a Class def named after
+  // the extended type.
+  populateOwners: (parsed: ParsedFile) => populateClassOwnedMembers(parsed),
+
+  // `super.method()` dispatches through the superclass chain.
   isSuperReceiver: (text) => text.trim() === 'super',
 
-  populateNamespaceSiblings: populateSwiftModuleSiblings,
+  // Whole-module same-target visibility without `import`.
+  populateNamespaceSiblings: populateSwiftTargetSiblings,
 
+  // Same-target File→File IMPORTS edges (no syntactic `import`). The
+  // generic finalized-ImportEdge pipeline has nothing to emit here, so
+  // these whole-module-visibility edges are emitted directly.
+  emitImplicitImportEdges: emitSwiftImplicitImportEdges,
+
+  // Mirror sibling files' return-type typeBindings into each file's
+  // module scope so cross-file chains (`let u = siblingFn(); u.m()`)
+  // resolve. Whole-module visibility has no import edge for
+  // `propagateImportedReturnTypes` to follow, so this directory-sibling
+  // mirror feeds it (mirrors Go's namespace-typeBinding mirror).
+  mirrorNamespaceTypeBindings: mirrorSwiftSiblingTypeBindings,
+
+  // Swift is statically typed — type info is reliable; the field-fallback
+  // heuristic over-connects, so keep it off. Return-type propagation on.
   fieldFallbackOnMethodLookup: false,
   propagatesReturnTypesAcrossImports: true,
-  hoistTypeBindingsToModule: true,
+
+  // Swift has no `new` keyword: `UserService()` is a bare call that
+  // resolves to the type's Constructor/Class. With whole-module sibling
+  // visibility, the callee is reachable workspace-wide, so allow the
+  // global free-call fallback (as Python/Go/Ruby/COBOL do for the same
+  // no-`new` constructor + cross-file free-call shape).
+  allowGlobalFreeCallFallback: true,
+
+  // Swift's call graph models `Type(...)` as a reference to the type
+  // itself, not its `init` — both the legacy DAG and this test suite link
+  // `Foo()` to the Class node even when an explicit `init` exists.
+  constructorCallTargetsClass: true,
 };
 
-function materializeSwiftScopeOnlyDefinitions(
-  graph: Parameters<NonNullable<ScopeResolver['materializeDefinitions']>>[0],
+export { swiftScopeResolver };
+
+/**
+ * Swift MRO — `defaultLinearize` (EXTENDS-only superclass chain) extended
+ * with protocol ancestors discovered via `IMPLEMENTS` edges. Protocols
+ * with default method implementations (via protocol extensions) are
+ * inherited by conforming types without an explicit `override`; the
+ * generic EXTENDS-only MRO would miss them because the conformer has no
+ * EXTENDS link to the protocol.
+ *
+ * Mirrors `buildKotlinMro`: append protocols after the superclass chain
+ * (Swift requires an explicit implementation on ambiguity, so first-seen
+ * ordering approximates method lookup). Transitive protocol inheritance
+ * (`protocol A: B`) is closed via BFS.
+ */
+function buildSwiftMro(
+  graph: KnowledgeGraph,
   parsedFiles: readonly ParsedFile[],
-): number {
-  let added = 0;
+  nodeLookup: GraphNodeLookup,
+): Map<string, string[]> {
+  const mro = buildMro(graph, parsedFiles, nodeLookup, defaultLinearize);
+
+  const defIdByGraphId = new Map<string, string>();
   for (const parsed of parsedFiles) {
     for (const def of parsed.localDefs) {
-      if (def.declarationKind !== 'macro_member' && def.declarationKind !== 'operator') continue;
-      const qualifiedName = def.qualifiedName;
-      const name = simpleName(def);
-      if (qualifiedName === undefined || name === null) continue;
-
-      const id = generateId(def.type, `${def.filePath}:${qualifiedName}${arityTagForDef(def)}`);
-      if (graph.getNode(id) !== undefined) continue;
-
-      const startLine = defStartLine(def.nodeId);
-      const node: GraphNode = {
-        id,
-        label: def.type,
-        properties: {
-          name,
-          filePath: def.filePath,
-          startLine,
-          endLine: startLine,
-          language: SupportedLanguages.Swift,
-          isExported: def.visibility === 'public' || def.visibility === 'open',
-          ...(def.parameterCount !== undefined ? { parameterCount: def.parameterCount } : {}),
-          ...(def.requiredParameterCount !== undefined
-            ? { requiredParameterCount: def.requiredParameterCount }
-            : {}),
-          ...(def.parameterTypes !== undefined ? { parameterTypes: def.parameterTypes } : {}),
-          ...(def.parameterLabels !== undefined ? { parameterLabels: def.parameterLabels } : {}),
-        },
-      };
-      graph.addNode(node);
-      addScopeOnlyDefinitionRelationships(graph, parsed, def, id);
-      added++;
-    }
-  }
-  return added;
-}
-
-function addScopeOnlyDefinitionRelationships(
-  graph: Parameters<NonNullable<ScopeResolver['materializeDefinitions']>>[0],
-  parsed: ParsedFile,
-  def: ParsedFile['localDefs'][number],
-  nodeId: string,
-): void {
-  const fileId = generateId('File', def.filePath);
-  if (graph.getNode(fileId) !== undefined) {
-    graph.addRelationship(makeRelationship('DEFINES', fileId, nodeId));
-  }
-
-  const owner = parsed.localDefs.find((candidate) => candidate.nodeId === def.ownerId);
-  if (owner === undefined) return;
-  const ownerGraphId = graphIdForSwiftDef(owner);
-  if (ownerGraphId === null || graph.getNode(ownerGraphId) === undefined) return;
-  graph.addRelationship(makeRelationship('HAS_METHOD', ownerGraphId, nodeId));
-}
-
-function makeRelationship(
-  type: GraphRelationship['type'],
-  sourceId: string,
-  targetId: string,
-): GraphRelationship {
-  return {
-    id: generateId(type, `${sourceId}->${targetId}`),
-    sourceId,
-    targetId,
-    type,
-    confidence: 1.0,
-    reason: 'swift-scope: materialized definition',
-  };
-}
-
-function graphIdForSwiftDef(def: ParsedFile['localDefs'][number]): string | null {
-  const qualifiedName = def.qualifiedName ?? simpleName(def);
-  if (qualifiedName === null) return null;
-  return generateId(def.type, `${def.filePath}:${qualifiedName}${arityTagForDef(def)}`);
-}
-
-function arityTagForDef(def: ParsedFile['localDefs'][number]): string {
-  return (def.type === 'Function' || def.type === 'Method' || def.type === 'Constructor') &&
-    def.ownerId !== undefined
-    ? `#${def.parameterCount ?? 0}`
-    : '';
-}
-
-function defStartLine(nodeId: string): number {
-  const match = nodeId.match(/#(\d+):\d+:/);
-  const parsed = match?.[1] === undefined ? Number.NaN : Number.parseInt(match[1], 10);
-  return Number.isFinite(parsed) ? parsed : 1;
-}
-
-function mergeSwiftExtensionMembersIntoPrimaryOwners(
-  parsed: ParsedFile,
-  parsedFiles: readonly ParsedFile[],
-): void {
-  const primaryByName = new Map<string, ParsedFile['localDefs'][number]>();
-  for (const file of parsedFiles) {
-    for (const def of file.localDefs) {
-      if (!isSwiftNominalType(def)) continue;
-      if (def.declarationKind === 'extension') continue;
-      const name = simpleName(def);
-      if (name !== null && !primaryByName.has(name)) primaryByName.set(name, def);
+      if (!isClassLike(def.type)) continue;
+      const graphId = resolveDefGraphId(parsed.filePath, def, nodeLookup);
+      if (graphId !== undefined) defIdByGraphId.set(graphId, def.nodeId);
     }
   }
 
-  const extensionIds = new Map<string, ParsedFile['localDefs'][number]>();
-  for (const def of parsed.localDefs) {
-    if (!isSwiftNominalType(def) || def.declarationKind !== 'extension') continue;
-    const name = simpleName(def);
-    const primary = name === null ? undefined : primaryByName.get(name);
-    if (primary !== undefined) extensionIds.set(def.nodeId, primary);
+  const directImpls = new Map<string, string[]>();
+  for (const rel of graph.iterRelationshipsByType('IMPLEMENTS')) {
+    const source = defIdByGraphId.get(rel.sourceId);
+    const target = defIdByGraphId.get(rel.targetId);
+    if (source === undefined || target === undefined) continue;
+    let list = directImpls.get(source);
+    if (list === undefined) {
+      list = [];
+      directImpls.set(source, list);
+    }
+    if (!list.includes(target)) list.push(target);
   }
 
-  if (extensionIds.size === 0) return;
-  for (const def of parsed.localDefs) {
-    if (def.ownerId === undefined) continue;
-    const primary = extensionIds.get(def.ownerId);
-    if (primary === undefined) continue;
-    (def as { ownerId?: string; qualifiedName?: string }).ownerId = primary.nodeId;
-    const name = simpleName(def);
-    const ownerName = simpleName(primary);
-    if (name !== null && ownerName !== null) {
-      (def as { qualifiedName?: string }).qualifiedName = `${ownerName}.${name}`;
+  for (const [classDefId, extendsMro] of mro) {
+    const ancestorChain = [classDefId, ...extendsMro];
+    const seeds: string[] = [];
+    for (const ancestorId of ancestorChain) {
+      for (const ifaceId of directImpls.get(ancestorId) ?? []) seeds.push(ifaceId);
+    }
+    if (seeds.length === 0) continue;
+    const protocols = closeProtocols(seeds, directImpls);
+    mro.set(classDefId, [...extendsMro, ...protocols.filter((i) => !extendsMro.includes(i))]);
+  }
+
+  // Types that only conform to protocols (no superclass) still need an MRO.
+  for (const [classDefId, ifaces] of directImpls) {
+    if (mro.has(classDefId)) continue;
+    mro.set(classDefId, closeProtocols([...ifaces], directImpls));
+  }
+
+  return mro;
+}
+
+function closeProtocols(
+  seeds: readonly string[],
+  directImpls: ReadonlyMap<string, readonly string[]>,
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const queue: string[] = [...seeds];
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    if (seen.has(cur)) continue;
+    seen.add(cur);
+    out.push(cur);
+    for (const next of directImpls.get(cur) ?? []) {
+      if (!seen.has(next)) queue.push(next);
     }
   }
-}
-
-function isSwiftNominalType(def: ParsedFile['localDefs'][number]): boolean {
-  return def.type === 'Class' || def.type === 'Struct' || def.type === 'Enum';
-}
-
-function simpleName(def: ParsedFile['localDefs'][number]): string | null {
-  const q = def.qualifiedName;
-  if (q === undefined || q.length === 0) return null;
-  const dot = q.lastIndexOf('.');
-  return dot === -1 ? q : q.slice(dot + 1);
+  return out;
 }

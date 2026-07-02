@@ -14,6 +14,27 @@ rules:
       # no checkout of fork code occurs. Header comment in the file documents.
       - ci-report.yml
 
+      # workflow_run is the trusted half of the autofix pipeline. The
+      # untrusted half (pr-autofix.yml) runs fork code with permissions:{}
+      # and produces only a diff artifact (data, not executable code). The
+      # publish job consumes the artifact, allowlist-validates every field
+      # of metadata.json before exporting to $GITHUB_OUTPUT, never checks
+      # out fork code, and never executes anything fork-controlled. Header
+      # comment in the file documents the split.
+      - pr-autofix-publish.yml
+
+      # workflow_run is the trusted half of the vendored-grammar prebuild
+      # pipeline (commit-fork-prebuilds.yml). The untrusted producer
+      # (build-tree-sitter-prebuilds.yml on a fork pull_request) builds +
+      # validates the .node prebuilds and uploads them as artifacts. This
+      # consumer downloads ONLY those artifacts + metadata.json,
+      # allowlist-validates every metadata field, cross-checks identity against
+      # the workflow_run authority (head_sha / head_repo / pr_number), and
+      # checks out the fork head pinned to that HEAD SHA solely to ADD prebuild
+      # files (never executes fork code) before pushing. Header comment in the
+      # file documents the split.
+      - commit-fork-prebuilds.yml
+
       # pull_request_target needed by claude-code-action to access secrets
       # and post review comments on fork PRs. Mitigated by: PR checkouts pin
       # the fork's HEAD SHA (not the branch ref) to prevent TOCTOU races,
@@ -28,7 +49,8 @@ rules:
       - pr-labeler.yml
 
   # Note: cache-poisoning is NOT exempted. The two prior findings in
-  # publish.yml and release-candidate.yml were fixed structurally by
-  # dropping `cache: npm` from those workflows (matches the pattern used
-  # by PyO3/maturin for the same audit). See the commit that added this
-  # file for the rationale.
+  # publish.yml and the former release-candidate.yml were fixed structurally
+  # by dropping `cache: npm` from those workflows (matches the pattern used
+  # by PyO3/maturin for the same audit). After the publish-workflow
+  # unification (issue #1609), only publish.yml remains; the same
+  # cache-poisoning hardening applies there.

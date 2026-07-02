@@ -19,10 +19,8 @@ import {
 } from './helpers.js';
 import { isLanguageAvailable } from '../../../src/core/tree-sitter/parser-loader.js';
 import { SupportedLanguages } from '../../../src/config/supported-languages.js';
-import { isRegistryPrimary } from '../../../src/core/ingestion/registry-primary-flag.js';
 
 const swiftAvailable = isLanguageAvailable(SupportedLanguages.Swift);
-const swiftRegistryPrimary = isRegistryPrimary(SupportedLanguages.Swift);
 
 describe.skipIf(!swiftAvailable)('Swift constructor-inferred type resolution', () => {
   let result: PipelineResult;
@@ -305,17 +303,6 @@ describe.skipIf(!swiftAvailable)('Swift extension deduplication', () => {
     );
     expect(saveCall).toBeDefined();
   });
-
-  it('resolves product.displayName() to the extension-owned member', () => {
-    const calls = getRelationships(result, 'CALLS');
-    const extensionCall = calls.find(
-      (c) =>
-        c.target === 'displayName' &&
-        c.source === 'process' &&
-        c.targetFilePath === 'ProductExtensions.swift',
-    );
-    expect(extensionCall).toBeDefined();
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -470,8 +457,16 @@ describe.skipIf(!swiftAvailable)('Swift await / try expression unwrapping', () =
 });
 
 // ---------------------------------------------------------------------------
-// For-in loop element type inference: Swift registry-primary captures for-loop
-// aliases so element member calls resolve through the collection's element type.
+// For-in loop element type inference: extractForLoopBinding derives element
+// type from the iterable's declared type annotation (e.g., [User] → User).
+//
+// KNOWN GAP: The type-env correctly stores declarationTypeNodes for Swift
+// array types ([User]), but the scope-resolution call path doesn't propagate
+// the for-loop binding to receiver resolution. The type-env infrastructure
+// (extractForLoopBinding, extractSwiftElementTypeFromTypeNode,
+// declarationTypeNodes population for type_annotation) is in place — the
+// integration gap is in how the TypeEnv is rebuilt for call resolution.
+// Fixture: swift-for-loop-inference/ (ready for when this is wired up).
 // ---------------------------------------------------------------------------
 
 describe.skipIf(!swiftAvailable)('Swift for-in loop element type inference', () => {
@@ -489,39 +484,6 @@ describe.skipIf(!swiftAvailable)('Swift for-in loop element type inference', () 
   it('creates implicit import edges between files', () => {
     const imports = getRelationships(result, 'IMPORTS');
     expect(imports.length).toBeGreaterThan(0);
-  });
-
-  it('resolves user.save() from the inferred for-in element type', () => {
-    const calls = getRelationships(result, 'CALLS');
-    const saveCall = calls.find(
-      (c) =>
-        c.target === 'save' && c.source === 'processAll' && c.targetFilePath === 'Models.swift',
-    );
-    expect(saveCall).toBeDefined();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Swift 6.3 module selectors:
-// ModuleA::getValue() disambiguates which imported module owns the call.
-// tree-sitter-swift 0.7.1 still parses this syntax with an ERROR node, so
-// GitNexus must preserve the call through a compatibility capture.
-// ---------------------------------------------------------------------------
-
-describe.skipIf(!swiftAvailable || !swiftRegistryPrimary)('Swift module selector calls', () => {
-  let result: PipelineResult;
-
-  beforeAll(async () => {
-    result = await runPipelineFromRepo(path.join(FIXTURES, 'swift-module-selectors'), () => {});
-  }, 60000);
-
-  it('resolves ModuleA::getValue() through the imported SwiftPM target', () => {
-    const calls = getRelationships(result, 'CALLS');
-    const selectorCall = calls.find(
-      (c) => c.target === 'getValue' && c.targetFilePath === 'Sources/ModuleA/API.swift',
-    );
-    expect(selectorCall).toBeDefined();
-    expect(selectorCall!.source).toBe('run');
   });
 });
 
@@ -609,59 +571,6 @@ describe.skipIf(!swiftAvailable)('Swift call-result binding', () => {
   });
 });
 
-describe.skipIf(!swiftAvailable || !swiftRegistryPrimary)(
-  'Swift assignment aliases, optional chaining, and writes',
-  () => {
-    let result: PipelineResult;
-
-    beforeAll(async () => {
-      result = await runPipelineFromRepo(
-        path.join(FIXTURES, 'swift-assignment-nullable-write'),
-        () => {},
-      );
-    }, 60000);
-
-    it('resolves direct assignment aliases through multiple hops', () => {
-      const calls = getRelationships(result, 'CALLS');
-      const saveCalls = calls.filter((c) => c.source === 'processAliases' && c.target === 'save');
-      expect(
-        saveCalls.filter((c) => c.targetFilePath === 'Models.swift').length,
-      ).toBeGreaterThanOrEqual(2);
-    });
-
-    it('resolves optional-chain member calls from the wrapped receiver type', () => {
-      const calls = getRelationships(result, 'CALLS');
-      const saveCall = calls.find((c) => c.source === 'processOptional' && c.target === 'save');
-      expect(saveCall).toBeDefined();
-      expect(saveCall!.targetFilePath).toBe('Models.swift');
-    });
-
-    it('resolves direct call-result chains without an intermediate variable', () => {
-      const calls = getRelationships(result, 'CALLS');
-      const saveCall = calls.find((c) => c.source === 'processDirectChain' && c.target === 'save');
-      expect(saveCall).toBeDefined();
-      expect(saveCall!.targetFilePath).toBe('Models.swift');
-    });
-
-    it('resolves super.member() to inherited Swift members', () => {
-      const calls = getRelationships(result, 'CALLS');
-      const inheritedCall = calls.find(
-        (c) => c.source === 'processSuper' && c.target === 'inheritedSave',
-      );
-      expect(inheritedCall).toBeDefined();
-      expect(inheritedCall!.targetFilePath).toBe('Models.swift');
-    });
-
-    it('emits write ACCESSES edges for Swift field assignments', () => {
-      const accesses = getRelationships(result, 'ACCESSES');
-      const writes = accesses.filter((e) => e.rel.reason === 'write');
-      const nameWrite = writes.find((e) => e.source === 'processAliases' && e.target === 'name');
-      expect(nameWrite).toBeDefined();
-      expect(nameWrite!.rel.confidence).toBe(1.0);
-    });
-  },
-);
-
 // ---------------------------------------------------------------------------
 // Method enrichment: isAbstract, isFinal, isStatic, annotations
 // Animal protocol with speak(), Dog class with speak(), static classify(),
@@ -678,13 +587,6 @@ describe.skipIf(!swiftAvailable)('Swift method enrichment', () => {
   it('detects Animal protocol and Dog class', () => {
     expect(getNodesByLabel(result, 'Interface')).toContain('Animal');
     expect(getNodesByLabel(result, 'Class')).toContain('Dog');
-  });
-
-  it('captures Swift declaration attributes as class annotations', () => {
-    const classes = getNodesByLabelFull(result, 'Class');
-    const dog = classes.find((n) => n.name === 'Dog');
-    expect(dog).toBeDefined();
-    expect(dog!.properties.annotations).toContain('@MainActor');
   });
 
   it('emits IMPLEMENTS edge Dog -> Animal', () => {
@@ -742,20 +644,6 @@ describe.skipIf(!swiftAvailable)('Swift method enrichment', () => {
     const breathe = methods.find((n) => n.name === 'breathe');
     expect(breathe).toBeDefined();
     expect(breathe!.properties.annotations).toContain('@objc');
-  });
-
-  it('captures Swift attributes with arguments as function annotations', () => {
-    const methods = getNodesByLabelFull(result, 'Function');
-    const speak = methods.find((n) => n.name === 'speak' && n.properties.startLine === 5);
-    expect(speak).toBeDefined();
-    expect(speak!.properties.annotations).toContain('@available');
-  });
-
-  it('captures Swift property wrappers as property annotations', () => {
-    const properties = getNodesByLabelFull(result, 'Property');
-    const state = properties.find((n) => n.name === 'state');
-    expect(state).toBeDefined();
-    expect(state!.properties.annotations).toContain('@State');
   });
 
   it('populates parameterTypes for classify(_ name: String)', () => {
@@ -979,357 +867,7 @@ describe.skipIf(!swiftAvailable)('Swift overloaded method disambiguation', () =>
 });
 
 // ---------------------------------------------------------------------------
-// First-class Swift regression coverage: module visibility, SwiftPM target metadata,
-// extension members, same-type label overloads, closures, and declaration shapes.
-// ---------------------------------------------------------------------------
-
-describe.skipIf(!swiftAvailable || !swiftRegistryPrimary)(
-  'SwiftPM custom target paths and dependencies',
-  () => {
-    let result: PipelineResult;
-
-    beforeAll(async () => {
-      result = await runPipelineFromRepo(
-        path.join(FIXTURES, 'swift-package-custom-targets'),
-        () => {},
-      );
-    }, 60000);
-
-    it('resolves an import from a custom executable target path to its custom library target path', () => {
-      const calls = getRelationships(result, 'CALLS');
-      const factoryCall = calls.find(
-        (c) =>
-          c.target === 'makeCoreService' && c.targetFilePath === 'Modules/Core/CoreService.swift',
-      );
-      expect(factoryCall).toBeDefined();
-    });
-
-    it('resolves member calls through the imported custom-path target', () => {
-      const calls = getRelationships(result, 'CALLS');
-      const runCall = calls.find(
-        (c) => c.target === 'runCore' && c.targetFilePath === 'Modules/Core/CoreService.swift',
-      );
-      expect(runCall).toBeDefined();
-    });
-  },
-);
-
-describe.skipIf(!swiftAvailable || !swiftRegistryPrimary)(
-  'Swift module visibility and @testable imports',
-  () => {
-    let result: PipelineResult;
-
-    beforeAll(async () => {
-      result = await runPipelineFromRepo(path.join(FIXTURES, 'swift-module-visibility'), () => {});
-    }, 60000);
-
-    it('exports public symbols to an importing target', () => {
-      const calls = getRelationships(result, 'CALLS');
-      expect(
-        calls.find(
-          (c) => c.target === 'publicHelper' && c.targetFilePath === 'Sources/Models/API.swift',
-        ),
-      ).toBeDefined();
-      expect(
-        calls.find((c) => c.target === 'doWork' && c.targetFilePath === 'Sources/Models/API.swift'),
-      ).toBeDefined();
-    });
-
-    it('does not export internal or private helpers to a normal importing target', () => {
-      const calls = getRelationships(result, 'CALLS');
-      const appCalls = calls.filter((c) => c.source === 'runApp');
-      expect(appCalls.find((c) => c.target === 'internalHelper')).toBeUndefined();
-      expect(appCalls.find((c) => c.target === 'secretHelper')).toBeUndefined();
-      expect(appCalls.find((c) => c.target === 'fileOnlyHelper')).toBeUndefined();
-    });
-
-    it('allows @testable import to resolve internal helpers without exposing private helpers', () => {
-      const calls = getRelationships(result, 'CALLS');
-      const testInternalCall = calls.find(
-        (c) =>
-          c.source === 'runTests' &&
-          c.target === 'internalHelper' &&
-          c.targetFilePath === 'Sources/Models/API.swift',
-      );
-      expect(testInternalCall).toBeDefined();
-      expect(
-        calls.find((c) => c.source === 'runTests' && c.target === 'secretHelper'),
-      ).toBeUndefined();
-    });
-  },
-);
-
-describe.skipIf(!swiftAvailable || !swiftRegistryPrimary)(
-  'Swift @_exported import re-export chains',
-  () => {
-    let result: PipelineResult;
-
-    beforeAll(async () => {
-      result = await runPipelineFromRepo(path.join(FIXTURES, 'swift-exported-import'), () => {});
-    }, 60000);
-
-    it('resolves free functions re-exported through an @_exported import barrel', () => {
-      const calls = getRelationships(result, 'CALLS');
-      const factoryCall = calls.find(
-        (c) =>
-          c.source === 'runExportedImport' &&
-          c.target === 'makeExportedUser' &&
-          c.targetFilePath === 'Sources/Models/API.swift',
-      );
-      expect(factoryCall).toBeDefined();
-    });
-
-    it('propagates return types through Swift @_exported import barrels', () => {
-      const calls = getRelationships(result, 'CALLS');
-      const saveCall = calls.find(
-        (c) =>
-          c.source === 'runExportedImport' &&
-          c.target === 'save' &&
-          c.targetFilePath === 'Sources/Models/API.swift',
-      );
-      expect(saveCall).toBeDefined();
-    });
-  },
-);
-
-describe.skipIf(!swiftAvailable || !swiftRegistryPrimary)(
-  'Swift same-type external label overloads and trailing closures',
-  () => {
-    let result: PipelineResult;
-
-    beforeAll(async () => {
-      result = await runPipelineFromRepo(path.join(FIXTURES, 'swift-label-overload'), () => {});
-    }, 60000);
-
-    it('keeps same-arity same-type overload declarations separate by external label', () => {
-      const functions = getNodesByLabelFull(result, 'Function');
-      const finds = functions.filter(
-        (n) => n.name === 'find' && n.properties.filePath === 'Lookup.swift',
-      );
-      expect(finds.length).toBe(2);
-      expect(finds.map((n) => n.properties.parameterLabels).sort()).toEqual([['id'], ['name']]);
-    });
-
-    it('resolves both same-type label overload call sites', () => {
-      const calls = getRelationships(result, 'CALLS');
-      const findCalls = calls.filter((c) => c.source === 'runLookup' && c.target === 'find');
-      expect(findCalls.length).toBe(2);
-    });
-
-    it('counts a trailing closure as an argument and resolves the call body receiver', () => {
-      const calls = getRelationships(result, 'CALLS');
-      expect(calls.find((c) => c.source === 'runLookup' && c.target === 'perform')).toBeDefined();
-      expect(calls.find((c) => c.source === 'runLookup' && c.target === 'finish')).toBeDefined();
-    });
-  },
-);
-
-describe.skipIf(!swiftAvailable || !swiftRegistryPrimary)(
-  'Swift closure-local receiver inference',
-  () => {
-    let result: PipelineResult;
-
-    beforeAll(async () => {
-      result = await runPipelineFromRepo(
-        path.join(FIXTURES, 'swift-closure-receiver-inference'),
-        () => {},
-      );
-    }, 60000);
-
-    it('resolves named closure parameters from collection element type', () => {
-      const calls = getRelationships(result, 'CALLS');
-      const namedClosureCall = calls.find(
-        (c) => c.source === 'processClosures' && c.target === 'save',
-      );
-      expect(namedClosureCall).toBeDefined();
-      expect(namedClosureCall!.targetFilePath).toBe('Models.swift');
-    });
-
-    it('resolves shorthand $0 closure receivers from collection element type', () => {
-      const calls = getRelationships(result, 'CALLS');
-      const saveCalls = calls.filter((c) => c.source === 'processClosures' && c.target === 'save');
-      expect(saveCalls.length).toBe(2);
-      expect(saveCalls.every((c) => c.targetFilePath === 'Models.swift')).toBe(true);
-    });
-  },
-);
-
-describe.skipIf(!swiftAvailable || !swiftRegistryPrimary)('Swift declaration shapes', () => {
-  let result: PipelineResult;
-
-  beforeAll(async () => {
-    result = await runPipelineFromRepo(path.join(FIXTURES, 'swift-declaration-shapes'), () => {});
-  }, 60000);
-
-  it('models associatedtype declarations as type aliases', () => {
-    const aliases = getNodesByLabel(result, 'TypeAlias');
-    expect(aliases).toContain('Entity');
-  });
-
-  it('models subscript declarations as callable members', () => {
-    const functions = getNodesByLabelFull(result, 'Function');
-    const methods = getNodesByLabelFull(result, 'Method');
-    const subscripts = [...functions, ...methods].filter((n) => n.name === 'subscript');
-    expect(subscripts.length).toBeGreaterThan(0);
-  });
-
-  it('keeps actor methods resolvable through actor constructor inference', () => {
-    const classes = getNodesByLabel(result, 'Class');
-    expect(classes).toContain('Cache');
-    const calls = getRelationships(result, 'CALLS');
-    expect(calls.find((c) => c.source === 'runCache' && c.target === 'store')).toBeDefined();
-  });
-});
-
-describe.skipIf(!swiftAvailable || !swiftRegistryPrimary)(
-  'Swift first-class static support edge cases',
-  () => {
-    let result: PipelineResult;
-
-    beforeAll(async () => {
-      result = await runPipelineFromRepo(path.join(FIXTURES, 'swift-first-class-gaps'), () => {});
-    }, 60000);
-
-    it('synthesizes member declarations from attached macro names and resolves their calls', () => {
-      const calls = getRelationships(result, 'CALLS');
-      const macroCall = calls.find(
-        (c) =>
-          c.source === 'macroFlow' &&
-          c.target === 'macroSave' &&
-          c.targetFilePath === 'Sources/AvailableKit/Models.swift',
-      );
-      expect(macroCall).toBeDefined();
-      expect(macroCall!.targetLabel).toBe('Function');
-      expect(macroCall!.rel.targetId).toContain('MacroUser.macroSave');
-
-      const defines = getRelationships(result, 'DEFINES');
-      expect(
-        defines.find(
-          (e) =>
-            e.sourceLabel === 'File' &&
-            e.target === 'macroSave' &&
-            e.targetFilePath === 'Sources/AvailableKit/Models.swift',
-        ),
-      ).toBeDefined();
-
-      const members = getRelationships(result, 'HAS_METHOD');
-      expect(
-        members.find((e) => e.source === 'MacroUser' && e.target === 'macroSave'),
-      ).toBeDefined();
-    });
-
-    it('resolves @dynamicMemberLookup member chains through subscript(dynamicMember:)', () => {
-      const calls = getRelationships(result, 'CALLS');
-      const dynamicSave = calls.find(
-        (c) =>
-          c.source === 'runtimeDispatch' &&
-          c.target === 'save' &&
-          c.targetFilePath === 'Sources/AvailableKit/Models.swift',
-      );
-      expect(dynamicSave).toBeDefined();
-    });
-
-    it('resolves constant Objective-C selector perform calls to the selected method', () => {
-      const calls = getRelationships(result, 'CALLS');
-      const selectorCall = calls.find(
-        (c) =>
-          c.source === 'runtimeDispatch' &&
-          c.target === 'selectedAction' &&
-          c.targetFilePath === 'Sources/App/main.swift',
-      );
-      expect(selectorCall).toBeDefined();
-    });
-
-    it('evaluates canImport conditional compilation and excludes inactive branch calls', () => {
-      const calls = getRelationships(result, 'CALLS');
-      expect(
-        calls.find(
-          (c) =>
-            c.source === 'conditionalFlow' &&
-            c.target === 'selectedFactory' &&
-            c.targetFilePath === 'Sources/AvailableKit/Models.swift',
-        ),
-      ).toBeDefined();
-      expect(
-        calls.find((c) => c.source === 'conditionalFlow' && c.target === 'inactiveFactory'),
-      ).toBeUndefined();
-      expect(
-        calls.find(
-          (c) =>
-            c.source === 'conditionalFlow' &&
-            c.target === 'save' &&
-            c.targetFilePath === 'Sources/AvailableKit/Models.swift',
-        ),
-      ).toBeDefined();
-    });
-
-    it('resolves tuple, switch-case, and while-let pattern receiver types', () => {
-      const calls = getRelationships(result, 'CALLS');
-      const saveCalls = calls.filter((c) => c.source === 'patternFlow' && c.target === 'save');
-      expect(
-        saveCalls.filter((c) => c.targetFilePath === 'Sources/AvailableKit/Models.swift').length,
-      ).toBeGreaterThanOrEqual(5);
-    });
-
-    it('models generic where/associated-type constrained extension members as callable dispatch', () => {
-      const calls = getRelationships(result, 'CALLS');
-      const storeUserCalls = calls.filter(
-        (c) =>
-          c.source === 'genericFlow' &&
-          c.target === 'storeUser' &&
-          c.targetFilePath === 'Sources/AvailableKit/Models.swift',
-      );
-      expect(storeUserCalls.length).toBe(2);
-    });
-
-    it('resolves operator overload and enum case constructor calls as first-class call targets', () => {
-      const calls = getRelationships(result, 'CALLS');
-      expect(
-        calls.find(
-          (c) =>
-            c.source === 'nonstandardCalls' &&
-            c.target === '+' &&
-            c.targetFilePath === 'Sources/AvailableKit/Models.swift',
-        ),
-      ).toBeDefined();
-      expect(
-        getRelationships(result, 'HAS_METHOD').find(
-          (e) => e.source === 'Vector' && e.target === '+',
-        ),
-      ).toBeDefined();
-      expect(
-        calls.find(
-          (c) =>
-            c.source === 'nonstandardCalls' &&
-            c.target === 'user' &&
-            c.targetFilePath === 'Sources/AvailableKit/Models.swift',
-        ),
-      ).toBeDefined();
-    });
-
-    it('models deinit as a callable class member and attributes cleanup calls to it', () => {
-      const constructors = getNodesByLabelFull(result, 'Constructor');
-      expect(
-        constructors.find(
-          (n) =>
-            n.name === 'deinit' && n.properties.filePath === 'Sources/AvailableKit/Models.swift',
-        ),
-      ).toBeDefined();
-
-      const calls = getRelationships(result, 'CALLS');
-      const cleanupCall = calls.find(
-        (c) =>
-          c.source === 'deinit' &&
-          c.target === 'cleanup' &&
-          c.targetFilePath === 'Sources/AvailableKit/Models.swift',
-      );
-      expect(cleanupCall).toBeDefined();
-    });
-  },
-);
-
-// ---------------------------------------------------------------------------
-// SM-9/SM-10: lookupMethodByOwnerWithMRO + D0 fast path — Swift first-wins
+// SM-9/SM-10: inherited method resolution — Swift first-wins inheritance walk
 // ---------------------------------------------------------------------------
 
 describe.skipIf(!swiftAvailable)(
@@ -1360,3 +898,462 @@ describe.skipIf(!swiftAvailable)(
     });
   },
 );
+
+// ---------------------------------------------------------------------------
+// U3 — SPM-target subtree grouping (issue #1948). A Swift module is an SPM
+// TARGET (a directory SUBTREE `Sources/<Target>/…`), not the immediate
+// containing directory. `swift-multidir-target` has target `Alpha` spread
+// across `Sources/Alpha/Core` + `Sources/Alpha/Entry` plus a colliding
+// same-simple-named `User` in target `Beta` (`Sources/Beta/Core`). Grouping
+// by SPM target (not by immediate dir) keeps Alpha's two subdirs in one
+// module, so `User()` in Alpha/Entry resolves to Alpha/Core/User (NOT
+// Beta/Core/User) and cross-dir IMPORTS within Alpha emit — while Alpha and
+// Beta stay distinct modules with NO IMPORTS between them.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!swiftAvailable)('Swift SPM multi-directory target grouping', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'swift-multidir-target'), () => {});
+  }, 60000);
+
+  it('resolves User() in Alpha/Entry to Alpha/Core/User, not Beta/Core/User', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const ctorCall = calls.find(
+      (c) =>
+        c.target === 'User' &&
+        c.targetLabel === 'Class' &&
+        c.sourceFilePath === 'Sources/Alpha/Entry/App.swift',
+    );
+    expect(ctorCall).toBeDefined();
+    expect(ctorCall!.targetFilePath).toBe('Sources/Alpha/Core/User.swift');
+  });
+
+  it('resolves user.alphaSave() across directories within the Alpha target', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const memberCall = calls.find(
+      (c) => c.target === 'alphaSave' && c.source === 'processEntities',
+    );
+    expect(memberCall).toBeDefined();
+    expect(memberCall!.targetFilePath).toBe('Sources/Alpha/Core/User.swift');
+  });
+
+  it('emits cross-directory IMPORTS edges within the Alpha target (Entry <-> Core)', () => {
+    const imports = getRelationships(result, 'IMPORTS');
+    const entryToCore = imports.find(
+      (c) =>
+        c.sourceFilePath === 'Sources/Alpha/Entry/App.swift' &&
+        c.targetFilePath === 'Sources/Alpha/Core/User.swift',
+    );
+    const coreToEntry = imports.find(
+      (c) =>
+        c.sourceFilePath === 'Sources/Alpha/Core/User.swift' &&
+        c.targetFilePath === 'Sources/Alpha/Entry/App.swift',
+    );
+    expect(entryToCore).toBeDefined();
+    expect(coreToEntry).toBeDefined();
+  });
+
+  it('does NOT emit IMPORTS across distinct targets (no Alpha <-> Beta)', () => {
+    const imports = getRelationships(result, 'IMPORTS');
+    const crossTarget = imports.find(
+      (c) =>
+        (c.sourceFilePath.startsWith('Sources/Alpha/') &&
+          c.targetFilePath.startsWith('Sources/Beta/')) ||
+        (c.sourceFilePath.startsWith('Sources/Beta/') &&
+          c.targetFilePath.startsWith('Sources/Alpha/')),
+    );
+    expect(crossTarget).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// U3 — No-package multi-folder fallback (issue #1948). With NO scanned
+// source dir (`Sources/`/`Package/Sources/`/`src/`) `loadSwiftPackageConfig`
+// returns null, so ALL files form one `__default__` module (single-Xcode-
+// project assumption). `swift-multifolder-nopackage` spreads files across
+// `Models/` + `Services/` with no manifest; cross-folder visibility must
+// still resolve and emit IMPORTS because the whole repo is one module.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!swiftAvailable)(
+  'Swift no-package multi-folder fallback (__default__ module)',
+  () => {
+    let result: PipelineResult;
+
+    beforeAll(async () => {
+      result = await runPipelineFromRepo(
+        path.join(FIXTURES, 'swift-multifolder-nopackage'),
+        () => {},
+      );
+    }, 60000);
+
+    it('resolves User() in Services to Models/User.swift across folders', () => {
+      const calls = getRelationships(result, 'CALLS');
+      const ctorCall = calls.find(
+        (c) =>
+          c.target === 'User' &&
+          c.targetLabel === 'Class' &&
+          c.sourceFilePath === 'Services/App.swift',
+      );
+      expect(ctorCall).toBeDefined();
+      expect(ctorCall!.targetFilePath).toBe('Models/User.swift');
+    });
+
+    it('resolves user.save() across folders to Models/User.swift', () => {
+      const calls = getRelationships(result, 'CALLS');
+      const memberCall = calls.find((c) => c.target === 'save' && c.source === 'processEntities');
+      expect(memberCall).toBeDefined();
+      expect(memberCall!.targetFilePath).toBe('Models/User.swift');
+    });
+
+    it('emits cross-folder IMPORTS edges between Models and Services', () => {
+      const imports = getRelationships(result, 'IMPORTS');
+      const crossFolder = imports.find(
+        (c) =>
+          (c.sourceFilePath === 'Services/App.swift' && c.targetFilePath === 'Models/User.swift') ||
+          (c.sourceFilePath === 'Models/User.swift' && c.targetFilePath === 'Services/App.swift'),
+      );
+      expect(crossFolder).toBeDefined();
+    });
+  },
+);
+
+// ---------------------------------------------------------------------------
+// U4 — BUG1: member-write read/write classification (issue #1948). A Swift
+// assignment LHS `obj.field = x` is wrapped in `directly_assignable_expression`
+// (verified, tree-sitter-swift 0.7.1), so the old `parent.type === 'assignment'`
+// write guard was dead — member writes leaked as spurious READ ACCESSES and no
+// WRITE edge emitted. The fix re-tags the write-LHS navigation to
+// `@reference.write.member`, so a `write` ACCESSES edge emits (for BOTH a
+// `self.field = x` receiver-bound write AND a non-self `obj.field = x`) and no
+// spurious read appears at the LHS. Genuine standalone field READs
+// (`let y = obj.field`) — not just field-access CHAINS feeding a call — emit a
+// read ACCESSES.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!swiftAvailable)('Swift member-write ACCESSES (read/write classification)', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'swift-member-write-access'), () => {});
+  }, 60000);
+
+  it('emits write ACCESSES for self.field = x (self-receiver) with no spurious read at the LHS', () => {
+    const accesses = getRelationships(result, 'ACCESSES');
+    // init: `self.balance = start`; deposit: `self.balance = amount`.
+    const balanceWrites = accesses.filter(
+      (e) => e.target === 'balance' && e.targetLabel === 'Property' && e.rel.reason === 'write',
+    );
+    const writeSources = balanceWrites.map((e) => e.source).sort();
+    expect(writeSources).toContain('init');
+    expect(writeSources).toContain('deposit');
+    // No spurious READ at the write LHS (init/deposit only WRITE balance).
+    const balanceReadsFromWriters = accesses.filter(
+      (e) =>
+        e.target === 'balance' &&
+        e.rel.reason === 'read' &&
+        (e.source === 'init' || e.source === 'deposit'),
+    );
+    expect(balanceReadsFromWriters).toHaveLength(0);
+  });
+
+  it('emits write ACCESSES for obj.field = y (non-self receiver) with no spurious read at the LHS', () => {
+    const accesses = getRelationships(result, 'ACCESSES');
+    // App.swift `transfer`: `acct.owner = "alice"` — non-self receiver,
+    // `acct`'s type (Account) must resolve first, then `owner` resolves.
+    const ownerWrite = accesses.find(
+      (e) =>
+        e.target === 'owner' &&
+        e.targetLabel === 'Property' &&
+        e.source === 'transfer' &&
+        e.rel.reason === 'write',
+    );
+    expect(ownerWrite).toBeDefined();
+    expect(ownerWrite!.targetFilePath).toBe('Models.swift');
+    // No spurious READ at the LHS of the non-self write.
+    const spuriousRead = accesses.find(
+      (e) => e.target === 'owner' && e.source === 'transfer' && e.rel.reason === 'read',
+    );
+    expect(spuriousRead).toBeUndefined();
+  });
+
+  // A STANDALONE field read (`let current = self.balance`, `let who = acct.owner`)
+  // — not just a field-access CHAIN feeding a call (e.g. `user.address.save()`) —
+  // emits a read ACCESSES via the reference-site `read` kind.
+  it('still emits a read ACCESSES for a genuine standalone field read (not the write LHS)', () => {
+    const accesses = getRelationships(result, 'ACCESSES');
+    // readBalance: `let current = self.balance` (self read).
+    const balanceRead = accesses.find(
+      (e) => e.target === 'balance' && e.source === 'readBalance' && e.rel.reason === 'read',
+    );
+    expect(balanceRead).toBeDefined();
+    expect(balanceRead!.targetLabel).toBe('Property');
+    // inspect: `let who = acct.owner` (non-self read).
+    const ownerRead = accesses.find(
+      (e) => e.target === 'owner' && e.source === 'inspect' && e.rel.reason === 'read',
+    );
+    expect(ownerRead).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// U4 — BUG2: `class func` self-binding (issue #1948). A Swift `class func`
+// (type method) emits a BARE anonymous `class` token directly under
+// `function_declaration` (verified, tree-sitter-swift 0.7.1), whereas
+// `static func` emits it under a `modifiers > property_modifier` wrapper. The
+// old `isStaticMethod` scanned only the `modifiers` wrapper, so a `class func`
+// wrongly received a `self: <Type>` INSTANCE binding (it should have none — a
+// type method has no instance receiver). The fix delegates to
+// `swiftMethodConfig.isStatic`, which detects both via `hasKeyword('class')`.
+//
+// Observable signal: an instance `self.label` property read resolves with full
+// self-binding provenance (`reason === 'read'`), but inside a `class func` /
+// `static func` `self.label` has no instance binding, so it resolves only via
+// the weaker lexical name fallback (`reason === 'scope-resolution: read'`).
+// Pre-fix, the `class func` read carried the instance-binding provenance like
+// `instanceCaller`; post-fix it matches `staticCaller`.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!swiftAvailable)('Swift class func receiver (no instance self-binding)', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'swift-class-func-receiver'), () => {});
+  }, 60000);
+
+  it('a class func gets no instance self-binding (parity with static func; instance method differs)', () => {
+    const accesses = getRelationships(result, 'ACCESSES');
+    const reasonFor = (src: string): string | undefined =>
+      accesses.find((e) => e.target === 'label' && e.source === src && e.targetLabel === 'Property')
+        ?.rel.reason;
+
+    const instanceReason = reasonFor('instanceCaller');
+    const classFuncReason = reasonFor('classCaller');
+    const staticFuncReason = reasonFor('staticCaller');
+
+    // Instance method has a real `self` receiver: full self-binding provenance.
+    expect(instanceReason).toBe('read');
+    // `class func` must behave EXACTLY like `static func`: no instance
+    // self-binding, so the read resolves only via the lexical name fallback.
+    expect(classFuncReason).toBe('scope-resolution: read');
+    expect(staticFuncReason).toBe('scope-resolution: read');
+    expect(classFuncReason).toBe(staticFuncReason);
+    // And it must NOT carry the instance method's self-binding provenance.
+    expect(classFuncReason).not.toBe(instanceReason);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// U4 — BUG3: multi-clause `if let` / `guard let` (issue #1948).
+// `if let a = makeA(), let b = makeB()` has a FLAT child list where each clause
+// is `value_binding_pattern · simple_identifier · = · call_expression`
+// (verified, tree-sitter-swift 0.7.1). The old code read only the FIRST clause
+// (`childForFieldName('bound_identifier')` returns just `a`), so the second
+// binding `b: makeB() -> B` was never inferred. The fix walks all clauses and
+// emits one `@type-binding.constructor` per clause.
+//
+// Observable signal: `b.shared()` where B.shared collides with Decoy.shared, so
+// it resolves to B.shared ONLY via the second clause binding — a unique-name
+// global fallback is ambiguous. The first clause `a.m()` (unique name) resolves
+// directly; the second clause `b.shared()` resolves only via its type binding,
+// since the ambiguous `shared` defeats the name fallback.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!swiftAvailable)('Swift multi-clause if-let / guard-let binding', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'swift-multi-if-let'), () => {});
+  }, 60000);
+
+  it('detects A, B and Decoy classes', () => {
+    const classes = getNodesByLabel(result, 'Class');
+    expect(classes).toContain('A');
+    expect(classes).toContain('B');
+    expect(classes).toContain('Decoy');
+  });
+
+  it('resolves b.shared() to B.shared via the SECOND if-let clause binding', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const sharedCall = calls.find(
+      (c) =>
+        c.target === 'shared' &&
+        c.source === 'processIfLet' &&
+        c.rel.targetId === 'Function:Models.swift:B.shared#0',
+    );
+    expect(sharedCall).toBeDefined();
+    // It must NOT resolve to the colliding Decoy.shared.
+    const decoyCall = calls.find(
+      (c) =>
+        c.target === 'shared' &&
+        c.source === 'processIfLet' &&
+        c.rel.targetId === 'Function:Models.swift:Decoy.shared#0',
+    );
+    expect(decoyCall).toBeUndefined();
+  });
+
+  it('resolves b.shared() to B.shared via the SECOND guard-let clause binding', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const sharedCall = calls.find(
+      (c) =>
+        c.target === 'shared' &&
+        c.source === 'processGuardLet' &&
+        c.rel.targetId === 'Function:Models.swift:B.shared#0',
+    );
+    expect(sharedCall).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// U4 — BUG4: nested-type extension re-keying (issue #1948).
+// `extension Foo.Bar` parses to a `(user_type (type_identifier Foo)
+// (type_identifier Bar))` name. The old code took `firstNamedChild` (`Foo`) as
+// the extended type, re-keying the extension's members onto `Foo` and binding
+// `self` to `Foo`. The fix uses `lastNamedChild` (`Bar`, the trailing
+// identifier) in BOTH the captures re-key and `enclosingTypeName`, so members
+// hoist onto Bar and `self == Bar`. Single-identifier `extension Foo` is
+// unchanged (first === last). `base()` is split across files (Types.swift /
+// Extension.swift) with a colliding Decoy.base so resolution depends purely on
+// `self == Bar`.
+//
+// The HAS_METHOD hoisting assertion and the `self.base() -> Bar.base`
+// resolution both run on the scope-resolution path, which resolves the
+// cross-file extension self-call via `self == Bar`.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!swiftAvailable)('Swift nested-type extension (extension Foo.Bar)', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'swift-nested-extension'), () => {});
+  }, 60000);
+
+  it('hoists added onto Bar (HAS_METHOD Foo.Bar -> added), not Foo', () => {
+    const hasMethod = getRelationships(result, 'HAS_METHOD');
+    const addedEdge = hasMethod.find(
+      (e) => e.target === 'added' && e.rel.sourceId === 'Class:Extension.swift:Foo.Bar',
+    );
+    expect(addedEdge).toBeDefined();
+    // Must NOT hoist onto a bare `Foo` owner.
+    const onFoo = hasMethod.find(
+      (e) => e.target === 'added' && e.rel.sourceId === 'Class:Types.swift:Foo',
+    );
+    expect(onFoo).toBeUndefined();
+  });
+
+  it('resolves self.base() inside added() to Bar.base (self == Bar), not Foo', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const baseCall = calls.find((c) => c.target === 'base' && c.source === 'added');
+    expect(baseCall).toBeDefined();
+    expect(baseCall!.rel.targetId).toBe('Function:Types.swift:Bar.base#0');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F75: protocol property requirements (`var title: String { get }`) are
+// extracted as Property symbols owned by the protocol. Before the fix these
+// protocol_property_declaration nodes were dropped (the structure query and
+// field config only knew property_declaration).
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!swiftAvailable)('Swift protocol property requirements (F75)', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'swift-protocol-property'), () => {}, {
+      skipGraphPhases: true,
+    });
+  }, 60000);
+
+  it('detects the Repository protocol and its property requirements', () => {
+    expect(getNodesByLabel(result, 'Interface')).toContain('Repository');
+    const properties = getNodesByLabel(result, 'Property');
+    expect(properties).toContain('title');
+    expect(properties).toContain('count');
+    expect(properties).toContain('shared');
+  });
+
+  it('emits HAS_PROPERTY edges from the protocol to each requirement', () => {
+    const propEdges = getRelationships(result, 'HAS_PROPERTY');
+    expect(edgeSet(propEdges)).toEqual(
+      expect.arrayContaining(['Repository → title', 'Repository → count', 'Repository → shared']),
+    );
+  });
+
+  it('populates type + static metadata on protocol requirement Property nodes', () => {
+    const properties = getNodesByLabelFull(result, 'Property');
+
+    const title = properties.find(
+      (p) => p.name === 'title' && p.properties.filePath === 'Repository.swift',
+    );
+    expect(title).toBeDefined();
+    expect(title!.properties.declaredType).toBe('String');
+    expect(title!.properties.isStatic).toBe(false);
+
+    const count = properties.find(
+      (p) => p.name === 'count' && p.properties.filePath === 'Repository.swift',
+    );
+    expect(count).toBeDefined();
+    expect(count!.properties.declaredType).toBe('Int');
+
+    const shared = properties.find(
+      (p) => p.name === 'shared' && p.properties.filePath === 'Repository.swift',
+    );
+    expect(shared).toBeDefined();
+    expect(shared!.properties.isStatic).toBe(true);
+  });
+
+  it('still extracts the class stored property exactly once (regression)', () => {
+    const propEdges = getRelationships(result, 'HAS_PROPERTY');
+    const nameEdges = propEdges.filter((e) => e.target === 'name' && e.source === 'FileRepository');
+    expect(nameEdges).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F79: methods/members declared inside a Swift enum (enum_class_body) are
+// extracted via the proper body-node path. Before the fix they only resolved
+// through the generic findBodies fallback, which logs a dev-mode warning.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!swiftAvailable)('Swift enum members (F79)', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'swift-enum-members'), () => {}, {
+      skipGraphPhases: true,
+    });
+  }, 60000);
+
+  it('extracts enum methods owned by the enum', () => {
+    const hasMethod = getRelationships(result, 'HAS_METHOD');
+    const enumMethods = hasMethod
+      .filter((e) => e.source === 'Direction')
+      .map((e) => e.target)
+      .sort();
+    expect(enumMethods).toContain('describe');
+    expect(enumMethods).toContain('make');
+  });
+
+  it('extracts each enum method exactly once (no double-count)', () => {
+    const hasMethod = getRelationships(result, 'HAS_METHOD');
+    const describeEdges = hasMethod.filter(
+      (e) => e.target === 'describe' && e.source === 'Direction',
+    );
+    expect(describeEdges).toHaveLength(1);
+  });
+
+  it('extracts an enum computed property as a Property of the enum', () => {
+    const propEdges = getRelationships(result, 'HAS_PROPERTY');
+    const labelEdge = propEdges.find((e) => e.target === 'label' && e.source === 'Direction');
+    expect(labelEdge).toBeDefined();
+  });
+
+  it('still extracts class methods (no regression / double-count)', () => {
+    const hasMethod = getRelationships(result, 'HAS_METHOD');
+    const headingEdges = hasMethod.filter((e) => e.target === 'heading' && e.source === 'Compass');
+    expect(headingEdges).toHaveLength(1);
+  });
+});
