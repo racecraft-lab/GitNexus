@@ -151,14 +151,16 @@ export function narrowOverloadCandidates(
     arityMatches.length > 0 ? arityMatches : anyUnknownBounds ? overloads : [];
 
   // ── Argument-label axis (Swift) ─────────────────────────────────────────
-  // When the call site carries external labels, keep only overloads whose
-  // `parameterLabels` match slot-for-slot (an empty call-site label is a
-  // positional wildcard). This separates same-arity same-type overloads that
-  // differ only by label (`find(id:)` vs `find(name:)`). Falls back to the
+  // When the call site carries external-label metadata, keep only overloads
+  // whose `parameterLabels` match slot-for-slot — an empty call-site label
+  // (`''`) binds only to an unlabeled (`_`) external parameter, it is not a
+  // wildcard. This separates same-arity same-type overloads that differ only
+  // by label (`find(id:)` vs `find(name:)`), including a fully-unlabeled call
+  // (`find("x")`) against a `find(_:)` / `find(id:)` pair. Falls back to the
   // label-agnostic set when no candidate matches (monotonicity — a bad label
   // signal must never wrongly empty the set and suppress a real edge).
   const argLabels = hookCtx?.argumentLabels;
-  if (argLabels !== undefined && argLabels.some((l) => l !== '')) {
+  if (argLabels !== undefined) {
     const labelMatched = candidates.filter((d) =>
       argumentLabelsMatch(argLabels, d.parameterLabels),
     );
@@ -263,10 +265,12 @@ function hasConversionOnlyArgType(
 }
 
 /**
- * Slot-for-slot argument-label match. A non-empty call-site label must equal
- * the candidate's label at the same position; an empty call-site label (a
- * positional argument or trailing closure) matches any parameter. A candidate
- * with no `parameterLabels` cannot satisfy a labeled call and is rejected.
+ * Slot-for-slot argument-label match. Each call-site label must equal the
+ * candidate's label at the same position — an empty call-site label (`''`,
+ * a positional argument with no external label) only matches a parameter
+ * that itself declares no external label (`_`, also `''`), it is not a
+ * wildcard. A candidate with no `parameterLabels` cannot satisfy any
+ * call-site label signal (labeled or unlabeled) and is rejected.
  */
 function argumentLabelsMatch(
   argLabels: readonly string[],
@@ -274,9 +278,7 @@ function argumentLabelsMatch(
 ): boolean {
   if (paramLabels === undefined) return false;
   for (let i = 0; i < argLabels.length; i++) {
-    const label = argLabels[i];
-    if (label === '') continue;
-    if (paramLabels[i] !== label) return false;
+    if (paramLabels[i] !== argLabels[i]) return false;
   }
   return true;
 }

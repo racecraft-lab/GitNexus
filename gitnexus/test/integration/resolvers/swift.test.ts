@@ -1542,6 +1542,17 @@ describe.skipIf(!swiftAvailable)('Swift argument-label overloads', () => {
     expect(calls.find((c) => c.source === 'runLookup' && c.target === 'perform')).toBeDefined();
     expect(calls.find((c) => c.source === 'runLookup' && c.target === 'finish')).toBeDefined();
   });
+
+  it('resolves a fully-unlabeled call against the unlabeled (`_`) overload, not the labeled one', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const rawFindCalls = calls.filter((c) => c.source === 'runRawLookup' && c.target === 'find');
+    // Single, unambiguous CALL edge — not OVERLOAD_AMBIGUOUS-suppressed.
+    expect(rawFindCalls.length).toBe(1);
+    const targetNode = result.graph.getNode(rawFindCalls[0].rel.targetId);
+    // The resolved def must be `find(_ raw:)` at file line 2, not `find(id:)`
+    // at file line 6 (`startLine` is 0-indexed).
+    expect(targetNode?.properties.startLine).toBe(1);
+  });
 });
 
 describe.skipIf(!swiftAvailable)('Swift module visibility', () => {

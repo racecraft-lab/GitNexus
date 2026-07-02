@@ -281,10 +281,12 @@ export function emitSwiftScopeCaptures(
           String(countCallArguments(callNode)),
         );
         // Call-site argument labels — feeds the overload-narrowing label axis
-        // so `find(id:)` and `find(name:)` resolve to their distinct overloads.
-        // Only emitted when at least one argument is labeled.
+        // so `find(id:)` and `find(name:)` resolve to their distinct overloads,
+        // and a fully-unlabeled call (`find("x")`) resolves against an all-`_`
+        // overload instead of staying ambiguous. Emitted whenever the call has
+        // at least one parenthesized argument, even when every label is empty.
         const argLabels = collectCallArgumentLabels(callNode);
-        if (argLabels.some((l) => l !== '')) {
+        if (argLabels.length > 0) {
           grouped['@reference.argument-labels'] = syntheticCapture(
             '@reference.argument-labels',
             callNode,
@@ -823,9 +825,11 @@ function attachArityMetadata(grouped: Record<string, Capture>, fnNode: SyntaxNod
     );
   }
   // Argument-label sidecar — drives Swift same-arity/same-type overload
-  // narrowing (`find(id:)` vs `find(name:)`). Only emitted when at least one
-  // parameter carries a non-empty external label.
-  if (arity.parameterLabels !== undefined && arity.parameterLabels.some((l) => l !== '')) {
+  // narrowing (`find(id:)` vs `find(name:)`, and an all-`_` overload vs a
+  // labeled one). Emitted whenever the function has at least one parameter,
+  // even when every label is empty (`_`) — the narrowing axis needs that
+  // metadata to tell a fully-unlabeled def apart from a labeled one.
+  if (arity.parameterLabels !== undefined) {
     grouped['@declaration.parameter-labels'] = syntheticCapture(
       '@declaration.parameter-labels',
       fnNode,
