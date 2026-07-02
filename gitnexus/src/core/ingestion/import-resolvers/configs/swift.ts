@@ -81,16 +81,53 @@ function getSwiftTargetIndex(
   return index;
 }
 
+/**
+ * Split a Swift import path into its module segment and an optional
+ * declaration segment. `Models` → `{ moduleName: 'Models', declarationName: null }`;
+ * `Models.User` (an `import struct Models.User` decl-import) →
+ * `{ moduleName: 'Models', declarationName: 'User' }`.
+ */
+function splitSwiftImportPath(
+  rawImportPath: string,
+): { moduleName: string; declarationName: string | null } {
+  const parts = rawImportPath.split('.').filter(Boolean);
+  return {
+    moduleName: parts[0] ?? rawImportPath,
+    declarationName: parts.length > 1 ? parts[1] : null,
+  };
+}
+
+/** Basename of a forward-slash path with the `.swift` extension stripped. */
+function swiftBasenameWithoutExtension(normalizedPath: string): string {
+  const slashIndex = normalizedPath.lastIndexOf('/');
+  const basename = slashIndex >= 0 ? normalizedPath.slice(slashIndex + 1) : normalizedPath;
+  return basename.replace(/\.swift$/i, '');
+}
+
 /** Swift Package.swift target map resolution strategy. */
 export const swiftPackageStrategy: ImportResolverStrategy = (rawImportPath, _filePath, ctx) => {
   const swiftPackageConfig = ctx.configs.swiftPackageConfig;
   if (swiftPackageConfig) {
+    // Decompose `Module.Decl` decl-imports; whole-module imports have a null
+    // declaration segment. Look up on the module segment (not the raw path)
+    // so `Models.User` still resolves against the `Models` target.
+    const { moduleName, declarationName } = splitSwiftImportPath(rawImportPath);
     // Only the targets map is needed; build the index lazily so repos
     // without a Package.swift config pay nothing.
-    if (swiftPackageConfig.targets.has(rawImportPath)) {
+    if (swiftPackageConfig.targets.has(moduleName)) {
       const index = getSwiftTargetIndex(ctx, swiftPackageConfig.targets);
-      const files = index.byTarget.get(rawImportPath);
+      const files = index.byTarget.get(moduleName);
       if (files !== undefined && files.length > 0) {
+        if (declarationName !== null) {
+          // Narrow an explicit declaration import to the source file whose
+          // basename matches the declaration (case-sensitive). The per-target
+          // bucket order follows `allFileList`, so ordering is preserved.
+          const narrowed = files.filter(
+            (file) =>
+              swiftBasenameWithoutExtension(file.replace(/\\/g, '/')) === declarationName,
+          );
+          return narrowed.length > 0 ? { kind: 'files', files: narrowed } : null;
+        }
         // Copy so callers can't mutate the cached index bucket.
         return { kind: 'files', files: [...files] };
       }

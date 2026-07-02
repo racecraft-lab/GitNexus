@@ -98,6 +98,25 @@ function extractSwiftReturnType(node: SyntaxNode): string | undefined {
 }
 
 /**
+ * Extract a Swift parameter's external (call-site) label.
+ *
+ * A `parameter` node carries one or two `simple_identifier` children: with two,
+ * the first is the external label and the second the internal name
+ * (`func f(to name: String)` → label `to`); with one, the same identifier serves
+ * as both (`func f(name: String)` → label `name`). A leading `_`
+ * (`func f(_ name: String)`) means the label is omitted → empty string.
+ */
+function swiftExternalParameterLabel(node: SyntaxNode): string {
+  const names: string[] = [];
+  for (let i = 0; i < node.namedChildCount; i++) {
+    const part = node.namedChild(i);
+    if (part?.type === 'simple_identifier') names.push(part.text);
+  }
+  if (names.length === 0) return '';
+  return names[0] === '_' ? '' : names[0]!;
+}
+
+/**
  * Extract parameters from a Swift function declaration.
  *
  * In tree-sitter-swift, parameters are `parameter` named children directly on
@@ -169,6 +188,7 @@ function extractSwiftParameters(node: SyntaxNode): ParameterInfo[] {
 
     params.push({
       name: paramName,
+      label: swiftExternalParameterLabel(child),
       type: typeName,
       rawType: rawTypeName,
       isOptional,

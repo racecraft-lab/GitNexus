@@ -7,6 +7,10 @@
     "captureGroups": 24,
     "digest": "3a3fa6017b6937de81e5f70bcab727910edb00053c7e5bd30da67ed1fb84c71f"
   },
+  "swift-assignment-nullable-write/Models.swift": {
+    "captureGroups": 54,
+    "digest": "a8c2eb755218bb24522c65204bf297705bf9d6285dd36ab4fde65c2d68872410"
+  },
   "swift-await-try/App.swift": {
     "captureGroups": 13,
     "digest": "7ba2042b0cb0a6e5c5d459dc460c509ace477b0ce97bec0cc8aaf981f320e69a"
@@ -39,6 +43,10 @@
     "captureGroups": 24,
     "digest": "04431e0287afed4c37779fb8fbf1d8cbe00ff917d6512fefcec5d7da1db69de8"
   },
+  "swift-closure-receiver-inference/Models.swift": {
+    "captureGroups": 13,
+    "digest": "a9c9cece6efd3c449bbf56ec461b1906ed6df62c11678e2e038430825a3581d1"
+  },
   "swift-constructor-fallback/App.swift": {
     "captureGroups": 7,
     "digest": "782cf85fcfe24b2baea6226f09226d23adc2bab591380bd33600cfe8509dbb83"
@@ -59,6 +67,10 @@
     "captureGroups": 12,
     "digest": "a9c40a2dcb51c6e6a9adbaa869183eed90a81302729d4d7a0c300084ea2978e1"
   },
+  "swift-declaration-shapes/Repository.swift": {
+    "captureGroups": 14,
+    "digest": "7929041e525ae8e31c8010aa2a653f601dbebcf6aa11a0a822e813fc41ce98e0"
+  },
   "swift-enum-members/Direction.swift": {
     "captureGroups": 18,
     "digest": "6378c8860113e9d0331f4da4d05e64e6933a995493131d2f2165f64f82978b0b"
@@ -71,9 +83,25 @@
     "captureGroups": 15,
     "digest": "9531822091fc521783d6815f03ed503f8d1010289b401f6f2b2057b422de3e76"
   },
+  "swift-exported-import/Package.swift": {
+    "captureGroups": 5,
+    "digest": "5a09db953430cbe294d0b933ebcd69a6ea257b86684e2d41b7886230236b27d1"
+  },
+  "swift-exported-import/Sources/App/main.swift": {
+    "captureGroups": 8,
+    "digest": "db271ec9a0dd0132a353de812bc9f57fdbb39e9d6f3fcf36be19171379e9d598"
+  },
+  "swift-exported-import/Sources/Barrel/Exports.swift": {
+    "captureGroups": 2,
+    "digest": "7528fad456ba98b9bdb79052fd64c6e5e6f46c5049c5bf795951c001d8c8a865"
+  },
+  "swift-exported-import/Sources/Models/API.swift": {
+    "captureGroups": 13,
+    "digest": "07e9fc89848fd0f3833cdd5232268979e5961ee7c542b12f2b77c519904eade9"
+  },
   "swift-extension-dedup/App.swift": {
-    "captureGroups": 7,
-    "digest": "f7062b53f33ec548a2ba5836ef5507b4c662d74ac4935dc654e6f95081f6fcbd"
+    "captureGroups": 8,
+    "digest": "9130082fe853a9f5b07d9fa420203c98f24770c685872afdc0f0f99707770f4f"
   },
   "swift-extension-dedup/Product.swift": {
     "captureGroups": 14,
@@ -90,6 +118,18 @@
   "swift-field-types/Models.swift": {
     "captureGroups": 20,
     "digest": "e55d0207f950d63ace5efb93551971b10e1fc6cc264e17098f006aa606d1e19c"
+  },
+  "swift-first-class-gaps/Package.swift": {
+    "captureGroups": 5,
+    "digest": "3e9985d0d569a81cf3f6347d5dc640bdde1748cc48fe95905567ab999ffc71ae"
+  },
+  "swift-first-class-gaps/Sources/App/main.swift": {
+    "captureGroups": 61,
+    "digest": "5e46c7940981ebc2f4c7bdf2f429280f2623d4b03f4f0cae3339d5a76ce89706"
+  },
+  "swift-first-class-gaps/Sources/AvailableKit/Models.swift": {
+    "captureGroups": 91,
+    "digest": "071283d54677c58a71dc2eca72ac8b976fc364f1ec647736c1f657af57ef3768"
   },
   "swift-for-loop-inference/App.swift": {
     "captureGroups": 5,
@@ -123,6 +163,10 @@
     "captureGroups": 8,
     "digest": "3007e4849cf77cc6cb360a1dbf70abec414a408076020f4730d01b8a80c1ddd3"
   },
+  "swift-label-overload/Lookup.swift": {
+    "captureGroups": 30,
+    "digest": "92459289dfdcd50629fcd095da82b250ab04d87eff5158ed651034f78f19bbef"
+  },
   "swift-member-write-access/App.swift": {
     "captureGroups": 11,
     "digest": "43c147d979761375f88bccd980f9db2274a937a3157ecaf93ca337fa54d0ae39"
@@ -132,12 +176,40 @@
     "digest": "e830e3dca7d6c6260181b78d4af5bc61e031bdce3a451588989f17223a5eac1c"
   },
   "swift-method-enrichment/Sources/Animal.swift": {
-    "captureGroups": 23,
-    "digest": "999c14cd327ad7e1cc90bae25e9c7e79a8ade5dd274d834d87a61846c4c91259"
+    "captureGroups": 25,
+    "digest": "adfd402b8ce4c2f0656312168888e9c6e3075575d0dd9aa83f217b05b44f1b89"
   },
   "swift-method-enrichment/Sources/App.swift": {
     "captureGroups": 10,
     "digest": "906c1f026eb183306a19eff5fafd888fc8982434e2ab07bc886100b99653359b"
+  },
+  "swift-module-selectors/Package.swift": {
+    "captureGroups": 5,
+    "digest": "75e2a8eff73f2d7e2c5366606878f363f219f639cd5da43050111d0ee2495da5"
+  },
+  "swift-module-selectors/Sources/App/main.swift": {
+    "captureGroups": 6,
+    "digest": "f8700d0a045ba371c71c3977a07ed205db0e429a0df7a4a5255c389d78ac700a"
+  },
+  "swift-module-selectors/Sources/ModuleA/API.swift": {
+    "captureGroups": 4,
+    "digest": "9e7574486fdeec480fcc1d1d14553b30c4dd4751c8055a753d94caf251ea3634"
+  },
+  "swift-module-visibility/Package.swift": {
+    "captureGroups": 5,
+    "digest": "1cb118df6bc46e548f24ab626b48c6bd46ea6e7f78808ada02881f1b1266a10e"
+  },
+  "swift-module-visibility/Sources/App/main.swift": {
+    "captureGroups": 12,
+    "digest": "b4d46970875303a0ba92eb8a121f114e9fc148a1392170651b03da8d3168f567"
+  },
+  "swift-module-visibility/Sources/Models/API.swift": {
+    "captureGroups": 21,
+    "digest": "6d529da59011b3a6f9ef52155597e498da9019c2f22dcb1c2891f203ffced62e"
+  },
+  "swift-module-visibility/Tests/ModelsTests/ModelsTests.swift": {
+    "captureGroups": 5,
+    "digest": "034f01c13902e70e859fff0500fcda5f0fbb01f5b4b91f54f75b1c7e346123d9"
   },
   "swift-multi-if-let/App.swift": {
     "captureGroups": 17,
@@ -190,6 +262,18 @@
   "swift-overload-dispatch/SqlRepository.swift": {
     "captureGroups": 23,
     "digest": "e5abcf7249afe3fb58fad54ec17da29195a95a05e6f1275375b9dc395030d9dc"
+  },
+  "swift-package-custom-targets/Apps/App/main.swift": {
+    "captureGroups": 8,
+    "digest": "282e36787c210b80afd5230281b89eaed697cb0ddaee1161cf10e43705f0868b"
+  },
+  "swift-package-custom-targets/Modules/Core/CoreService.swift": {
+    "captureGroups": 14,
+    "digest": "8e3f9924404b06abe13d8c5207c30f30c435a19e894e0c6f5ff5cb9899fdc5e6"
+  },
+  "swift-package-custom-targets/Package.swift": {
+    "captureGroups": 5,
+    "digest": "d02475828e152e463358d7ba347af6b7dded0923ce85dacef17be841ab667d5a"
   },
   "swift-parent-resolution/Sources/Models/BaseModel.swift": {
     "captureGroups": 7,
