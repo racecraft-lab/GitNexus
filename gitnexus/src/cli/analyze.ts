@@ -692,6 +692,10 @@ export interface AnalyzeOptions {
   embeddingAuthToken?: string;
   /** Embedding vector dimensions (positive integer string). Overrides GITNEXUS_EMBEDDING_DIMS. */
   embeddingDims?: string;
+  /** Opt in to LLM-generated semantic names and summaries for community clusters. */
+  enrichClusters?: boolean;
+  /** Number of community clusters per LLM enrichment request (positive integer string). */
+  clusterEnrichmentBatchSize?: string;
 }
 
 /**
@@ -917,6 +921,17 @@ const analyzeCommandImpl = async (
       return;
     }
     workerPoolSize = parsedWorkers;
+  }
+
+  let clusterEnrichmentBatchSize: number | undefined;
+  if (options.clusterEnrichmentBatchSize !== undefined) {
+    const parsed = Number(options.clusterEnrichmentBatchSize);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      cliError('  --cluster-enrichment-batch-size must be a positive integer.\n');
+      process.exitCode = 1;
+      return;
+    }
+    clusterEnrichmentBatchSize = parsed;
   }
 
   // Parse `--embeddings [limit]`: `true` → default cap, string → numeric cap
@@ -1332,6 +1347,12 @@ const analyzeCommandImpl = async (
         // Extra fetch-wrapper names from `.gitnexusrc` (#1589/#1852 residual);
         // forwarded to the routes phase consumer scan.
         fetchWrappers: options.fetchWrappers,
+        // Opt-in LLM cluster enrichment (--enrich-clusters / GITNEXUS_CLUSTER_ENRICHMENT).
+        // Threaded as a plain boolean + optional batch size; runFullAnalysis resolves
+        // the actual LLM client/config (env vars, saved config) before building the
+        // PipelineOptions.clusterEnrichment object the communities phase consumes.
+        clusterEnrichment: options.enrichClusters,
+        clusterEnrichmentBatchSize,
         // The CLI always process.exit()s after this returns (success path at the
         // end of analyzeCommandImpl, error/interrupt paths via process.exit too),
         // so the finalize close skips the native conn/db close — it can double-free

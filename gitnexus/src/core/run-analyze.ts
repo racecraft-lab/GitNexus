@@ -12,7 +12,7 @@
 import path from 'path';
 import fs from 'fs/promises';
 import { execFileSync } from 'child_process';
-import { runPipelineFromRepo } from './ingestion/pipeline.js';
+import { runPipelineFromRepo, type PipelineOptions } from './ingestion/pipeline.js';
 import { resetDegradedParseCounter } from './tree-sitter/safe-parse.js';
 import {
   initLbug,
@@ -74,6 +74,7 @@ import {
 import { DEFAULT_PDG_MAX_INTERPROC_EDGES } from './ingestion/taint/interproc-emit.js';
 import { taintModelVersion } from './ingestion/taint/typescript-model.js';
 import { parseTruthyEnv, parsePositiveIntEnv } from './ingestion/utils/env.js';
+import { resolveLLMConfig, callLLM, type LLMConfig } from './wiki/llm-client.js';
 import { computeFileHashes, diffFileHashes } from '../storage/file-hash.js';
 import {
   extractChangedSubgraph,
@@ -243,6 +244,12 @@ export interface AnalyzeOptions {
    * consumer scan unchanged.
    */
   fetchWrappers?: string[];
+  /** Opt in to LLM-generated semantic names and summaries for community clusters. */
+  clusterEnrichment?: boolean;
+  /** Number of community clusters per LLM enrichment request. */
+  clusterEnrichmentBatchSize?: number;
+  /** Optional LLM config overrides for cluster enrichment (env vars / saved config otherwise). */
+  clusterEnrichmentLLM?: Partial<LLMConfig>;
   /**
    * The caller will `process.exit()` immediately after this analyze returns (the
    * CLI `analyze` command). When set, the finalize/error close CHECKPOINTs for
@@ -296,6 +303,67 @@ const FTS_UNAVAILABLE_MESSAGE =
   'Full-text/BM25 search will be disabled until the LadybugDB FTS extension is ' +
   'installed once with network access (GITNEXUS_LBUG_EXTENSION_INSTALL=auto) or ' +
   'pre-installed for offline use. Run `gitnexus doctor` for details.';
+
+const CLUSTER_ENRICHMENT_SYSTEM_PROMPT =
+  'You produce concise JSON only. Do not include markdown fences or prose.';
+
+/**
+ * Resolve `--enrich-clusters`/`GITNEXUS_CLUSTER_ENRICHMENT` into the
+ * `PipelineOptions.clusterEnrichment` object the `communities` phase consumes,
+ * or `undefined` when enrichment isn't requested or no LLM API key is
+ * configured. Reuses the wiki command's LLM config resolution (env vars >
+ * saved `~/.gitnexus/config.json`) so cluster enrichment doesn't need its own
+ * separate credential setup.
+ */
+async function resolveClusterEnrichment(
+  options: AnalyzeOptions,
+  log: (message: string) => void,
+): Promise<PipelineOptions['clusterEnrichment'] | undefined> {
+  const enabled =
+    options.clusterEnrichment === true || parseTruthyEnv(process.env.GITNEXUS_CLUSTER_ENRICHMENT);
+  if (!enabled) return undefined;
+
+  const config = await resolveLLMConfig({
+    ...options.clusterEnrichmentLLM,
+    apiKey:
+      options.clusterEnrichmentLLM?.apiKey ||
+      process.env.GITNEXUS_CLUSTER_ENRICHMENT_API_KEY ||
+      undefined,
+    baseUrl:
+      options.clusterEnrichmentLLM?.baseUrl ||
+      process.env.GITNEXUS_CLUSTER_ENRICHMENT_BASE_URL ||
+      undefined,
+    model:
+      options.clusterEnrichmentLLM?.model ||
+      process.env.GITNEXUS_CLUSTER_ENRICHMENT_MODEL ||
+      undefined,
+    maxTokens: options.clusterEnrichmentLLM?.maxTokens ?? 2048,
+    temperature: options.clusterEnrichmentLLM?.temperature ?? 0,
+  });
+
+  if (!config.apiKey) {
+    log(
+      'Warning: cluster enrichment requested but no LLM API key is configured. ' +
+        'Set GITNEXUS_CLUSTER_ENRICHMENT_API_KEY, GITNEXUS_API_KEY, OPENAI_API_KEY, ' +
+        'or run `gitnexus wiki` once to save LLM config. Continuing with heuristic labels.',
+    );
+    return undefined;
+  }
+
+  return {
+    enabled: true,
+    batchSize:
+      options.clusterEnrichmentBatchSize ??
+      parsePositiveIntEnv(process.env.GITNEXUS_CLUSTER_ENRICHMENT_BATCH_SIZE) ??
+      5,
+    llmClient: {
+      generate: async (prompt: string) => {
+        const response = await callLLM(prompt, config, CLUSTER_ENRICHMENT_SYSTEM_PROMPT);
+        return response.content;
+      },
+    },
+  };
+}
 
 // Re-export the pure flag-derivation helper so external callers (and tests)
 // keep importing from this module's stable surface.
@@ -977,6 +1045,12 @@ export async function runFullAnalysis(
   // in-place (cache hits leave entries unchanged; misses add new ones).
   const parseCache = await loadParseCache(storagePath);
 
+  // Opt-in LLM cluster enrichment (--enrich-clusters / GITNEXUS_CLUSTER_ENRICHMENT).
+  // Resolved once here (not inside the communities phase) so the LLM config
+  // lookup and the missing-API-key warning happen up front, before spending
+  // time on the rest of the pipeline.
+  const clusterEnrichment = await resolveClusterEnrichment(options, log);
+
   // ── Phase 1: Full Pipeline (0–60%) ────────────────────────────────
   const pipelineResult = await runPipelineFromRepo(
     repoPath,
@@ -1013,6 +1087,7 @@ export async function runFullAnalysis(
       streamPdgEmit: resolveStreamPdgEmit(options),
       pdgEmitChunkSize: resolvePdgEmitChunkSize(options),
       fetchWrappers: options.fetchWrappers,
+      ...(clusterEnrichment ? { clusterEnrichment } : {}),
     },
   );
 
