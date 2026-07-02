@@ -57,6 +57,12 @@ export interface PipelineOptions {
     batchSize?: number;
   };
   /**
+   * Current file paths that should be reparsed in an incremental run. Scan and
+   * structure still see the full repository so path-based resolution remains
+   * correct, but expensive source parsing is restricted to this set.
+   */
+  reindexPaths?: readonly string[];
+  /**
    * Skip MRO, community detection, and process extraction for faster test runs.
    * The `pruneLocalSymbols` phase still runs — it is graph construction (it cleans
    * up inert local symbols), not graph analysis — so set `keepLocalValueSymbols`

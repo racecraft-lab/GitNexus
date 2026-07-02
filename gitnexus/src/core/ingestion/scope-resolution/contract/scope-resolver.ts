@@ -918,7 +918,6 @@ export interface ScopeResolver {
     indexes: ScopeResolutionIndexes,
     ctx: {
       readonly fileContents: ReadonlyMap<string, string>;
-      readonly resolutionConfig?: unknown;
       /** Pre-parsed tree-sitter trees keyed by file path. Same cache
        *  the orchestrator hands to `extractParsedFile`; passing it
        *  through here lets per-language hooks read the AST without
