@@ -1489,6 +1489,11 @@ export const SWIFT_QUERIES = `
 ; Initializers
 (init_declaration) @definition.constructor
 
+; Deinitializers — modeled as a callable class member. Like subscript, the node
+; has no name identifier, so capture the \`deinit\` keyword literal as the name
+; (a nameless @definition.constructor would default to "init" in the worker).
+(deinit_declaration "deinit" @name) @definition.constructor
+
 ; Properties (stored and computed)
 (property_declaration (pattern (simple_identifier) @name)) @definition.property
 
