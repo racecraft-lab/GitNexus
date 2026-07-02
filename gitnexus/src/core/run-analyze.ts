@@ -12,7 +12,7 @@
 import path from 'path';
 import fs from 'fs/promises';
 import { execFileSync } from 'child_process';
-import { runPipelineFromRepo } from './ingestion/pipeline.js';
+import { runPipelineFromRepo, type PipelineOptions } from './ingestion/pipeline.js';
 import { resetDegradedParseCounter } from './tree-sitter/safe-parse.js';
 import {
   initLbug,
@@ -52,7 +52,6 @@ import {
   loadMeta,
   ensureGitNexusIgnored,
   registerRepo,
-  isRepoRegistered,
   cleanupOldKuzuFiles,
   INCREMENTAL_SCHEMA_VERSION,
   type RepoMeta,
@@ -74,6 +73,7 @@ import {
 import { DEFAULT_PDG_MAX_INTERPROC_EDGES } from './ingestion/taint/interproc-emit.js';
 import { taintModelVersion } from './ingestion/taint/typescript-model.js';
 import { parseTruthyEnv, parsePositiveIntEnv } from './ingestion/utils/env.js';
+import { resolveLLMConfig, callLLM, type LLMConfig } from './wiki/llm-client.js';
 import { computeFileHashes, diffFileHashes } from '../storage/file-hash.js';
 import {
   extractChangedSubgraph,
@@ -243,6 +243,12 @@ export interface AnalyzeOptions {
    * consumer scan unchanged.
    */
   fetchWrappers?: string[];
+  /** Opt in to LLM-generated semantic names and summaries for community clusters. */
+  clusterEnrichment?: boolean;
+  /** Number of community clusters per LLM enrichment request. */
+  clusterEnrichmentBatchSize?: number;
+  /** Optional LLM config overrides for cluster enrichment (env vars / saved config otherwise). */
+  clusterEnrichmentLLM?: Partial<LLMConfig>;
   /**
    * The caller will `process.exit()` immediately after this analyze returns (the
    * CLI `analyze` command). When set, the finalize/error close CHECKPOINTs for
@@ -296,6 +302,67 @@ const FTS_UNAVAILABLE_MESSAGE =
   'Full-text/BM25 search will be disabled until the LadybugDB FTS extension is ' +
   'installed once with network access (GITNEXUS_LBUG_EXTENSION_INSTALL=auto) or ' +
   'pre-installed for offline use. Run `gitnexus doctor` for details.';
+
+const CLUSTER_ENRICHMENT_SYSTEM_PROMPT =
+  'You produce concise JSON only. Do not include markdown fences or prose.';
+
+/**
+ * Resolve `--enrich-clusters`/`GITNEXUS_CLUSTER_ENRICHMENT` into the
+ * `PipelineOptions.clusterEnrichment` object the `communities` phase consumes,
+ * or `undefined` when enrichment isn't requested or no LLM API key is
+ * configured. Reuses the wiki command's LLM config resolution (env vars >
+ * saved `~/.gitnexus/config.json`) so cluster enrichment doesn't need its own
+ * separate credential setup.
+ */
+async function resolveClusterEnrichment(
+  options: AnalyzeOptions,
+  log: (message: string) => void,
+): Promise<PipelineOptions['clusterEnrichment'] | undefined> {
+  const enabled =
+    options.clusterEnrichment === true || parseTruthyEnv(process.env.GITNEXUS_CLUSTER_ENRICHMENT);
+  if (!enabled) return undefined;
+
+  const config = await resolveLLMConfig({
+    ...options.clusterEnrichmentLLM,
+    apiKey:
+      options.clusterEnrichmentLLM?.apiKey ||
+      process.env.GITNEXUS_CLUSTER_ENRICHMENT_API_KEY ||
+      undefined,
+    baseUrl:
+      options.clusterEnrichmentLLM?.baseUrl ||
+      process.env.GITNEXUS_CLUSTER_ENRICHMENT_BASE_URL ||
+      undefined,
+    model:
+      options.clusterEnrichmentLLM?.model ||
+      process.env.GITNEXUS_CLUSTER_ENRICHMENT_MODEL ||
+      undefined,
+    maxTokens: options.clusterEnrichmentLLM?.maxTokens ?? 2048,
+    temperature: options.clusterEnrichmentLLM?.temperature ?? 0,
+  });
+
+  if (!config.apiKey) {
+    log(
+      'Warning: cluster enrichment requested but no LLM API key is configured. ' +
+        'Set GITNEXUS_CLUSTER_ENRICHMENT_API_KEY, GITNEXUS_API_KEY, OPENAI_API_KEY, ' +
+        'or run `gitnexus wiki` once to save LLM config. Continuing with heuristic labels.',
+    );
+    return undefined;
+  }
+
+  return {
+    enabled: true,
+    batchSize:
+      options.clusterEnrichmentBatchSize ??
+      parsePositiveIntEnv(process.env.GITNEXUS_CLUSTER_ENRICHMENT_BATCH_SIZE) ??
+      5,
+    llmClient: {
+      generate: async (prompt: string) => {
+        const response = await callLLM(prompt, config, CLUSTER_ENRICHMENT_SYSTEM_PROMPT);
+        return response.content;
+      },
+    },
+  };
+}
 
 // Re-export the pure flag-derivation helper so external callers (and tests)
 // keep importing from this module's stable surface.
@@ -800,6 +867,10 @@ export async function runFullAnalysis(
     options = { ...options, force: true };
   }
 
+  // Read once up front so the fast-path gate below and the embedding-mode
+  // derivation further down agree on the same count.
+  const existingEmbeddingCount = existingMeta?.stats?.embeddings ?? 0;
+
   // ── Early-return: already up to date ──────────────────────────────
   if (existingMeta && !options.force && existingMeta.lastCommit === currentCommit) {
     // Non-git folders have currentCommit = '' — always rebuild since we can't detect changes
@@ -846,30 +917,38 @@ export async function runFullAnalysis(
           return true; // conservative on git failure
         }
       })();
-      // Registration wrinkle around the fast path (#2264). A prior
-      // `analyze --name X` that hit a name collision writes meta.json (meta-save
-      // runs before registerRepo) then fails before registering, leaving the
-      // index up-to-date but UNREGISTERED. When the user re-runs with
-      // --allow-duplicate-name they explicitly want it registered, so fall
-      // through to the pipeline (which registers it, honoring the flag) instead
-      // of early-returning an unregistered repo the flag could never heal.
-      // For a PLAIN analyze we deliberately do NOT self-heal: an up-to-date but
-      // unregistered repo early-returns here and the CLI's assertAnalysisFinalized
-      // surfaces it as a hard failure (#1169) rather than silently registering a
-      // possibly half-finalized index. `isRepoRegistered` is only read on the
-      // opt-in branch so the common fast path keeps its single-stat cost.
-      const healUnregistered =
-        options.allowDuplicateName === true && !(await isRepoRegistered(repoPath));
-      if (!dirty && !healUnregistered) {
+      // `--embeddings` explicitly asks for embeddings, but a repo with 0
+      // stored embeddings (never embedded, or wiped by a prior
+      // --drop-embeddings) has nothing for the fast path to "preserve" —
+      // taking it here would silently strand the user with zero
+      // embeddings despite passing --embeddings. Fall through to the full
+      // pipeline instead, which will generate them.
+      const embeddingsRequestedButMissing =
+        options.embeddings === true && existingEmbeddingCount === 0;
+      if (!dirty && !embeddingsRequestedButMissing) {
         await ensureGitNexusIgnored(repoPath);
+        // Registration wrinkle around the fast path (#1169/#2264): a prior
+        // `analyze` can write meta.json (meta-save runs before registerRepo in
+        // the full pipeline finalize) and then fail — or the global registry
+        // can simply be lost/rebuilt out from under an up-to-date index —
+        // leaving a fully-finalized index UNREGISTERED. `assertAnalysisFinalized`
+        // (repo-manager.ts) documents this fast path as required to re-register
+        // the existing meta before that assertion runs, so a stale/missing
+        // registry entry self-heals here without forcing a full rebuild.
+        // `registerRepo` is idempotent for the common (no explicit `--name`)
+        // case; it only throws `RegistryNameCollisionError` when the user
+        // passed a colliding `--name` without `--allow-duplicate-name`, same
+        // as the full pipeline path — a real, actionable error, not silence.
+        const repoName = await registerRepo(repoPath, existingMeta, {
+          name: options.registryName,
+          allowDuplicateName: options.allowDuplicateName,
+          // Non-primary branch runs upsert into branches[]; the primary/flat
+          // run (placement.branch === undefined) refreshes the top-level
+          // fields — mirrors the full pipeline's registerRepo call (#2106).
+          branch: placement.branch,
+        });
         return {
-          // `resolveRepoIdentityRoot` collapses worktree roots to the
-          // canonical repo basename (#1259) but leaves arbitrary subdirs
-          // and `--skip-git` paths unchanged (#1232/#1233 intent preserved).
-          repoName:
-            options.registryName ??
-            getInferredRepoName(repoPath) ??
-            path.basename(resolveRepoIdentityRoot(repoPath)),
+          repoName,
           repoPath,
           stats: existingMeta.stats ?? {},
           alreadyUpToDate: true,
@@ -897,7 +976,6 @@ export async function runFullAnalysis(
   let cachedEmbeddingNodeIds = new Set<string>();
   let cachedEmbeddings: CachedEmbedding[] = [];
 
-  const existingEmbeddingCount = existingMeta?.stats?.embeddings ?? 0;
   const {
     forceRegenerateEmbeddings,
     preserveExistingEmbeddings,
@@ -966,12 +1044,22 @@ export async function runFullAnalysis(
   // in-place (cache hits leave entries unchanged; misses add new ones).
   const parseCache = await loadParseCache(storagePath);
 
+  // Opt-in LLM cluster enrichment (--enrich-clusters / GITNEXUS_CLUSTER_ENRICHMENT).
+  // Resolved once here (not inside the communities phase) so the LLM config
+  // lookup and the missing-API-key warning happen up front, before spending
+  // time on the rest of the pipeline.
+  const clusterEnrichment = await resolveClusterEnrichment(options, log);
+
   // ── Phase 1: Full Pipeline (0–60%) ────────────────────────────────
   const pipelineResult = await runPipelineFromRepo(
     repoPath,
     (p) => {
       const phaseLabel = PHASE_LABELS[p.phase] || p.phase;
-      const scaled = Math.round(p.percent * 0.6);
+      // Clamp defensively before scaling: a malformed (NaN/negative/>100)
+      // percent from a pipeline phase must not propagate into an out-of-range
+      // display value.
+      const clampedPercent = Number.isFinite(p.percent) ? Math.min(100, Math.max(0, p.percent)) : 0;
+      const scaled = Math.round(clampedPercent * 0.6);
       const message = p.detail
         ? `${p.message || phaseLabel} (${p.detail})`
         : p.message || phaseLabel;
@@ -998,6 +1086,7 @@ export async function runFullAnalysis(
       streamPdgEmit: resolveStreamPdgEmit(options),
       pdgEmitChunkSize: resolvePdgEmitChunkSize(options),
       fetchWrappers: options.fetchWrappers,
+      ...(clusterEnrichment ? { clusterEnrichment } : {}),
     },
   );
 
@@ -1391,7 +1480,12 @@ export async function runFullAnalysis(
         executeQuery,
         executeWithReusedStatement,
         (p) => {
-          const scaled = 90 + Math.round((p.percent / 100) * 8);
+          // Clamp defensively before scaling — see the pipeline-progress
+          // callback above for why.
+          const clampedPercent = Number.isFinite(p.percent)
+            ? Math.min(100, Math.max(0, p.percent))
+            : 0;
+          const scaled = 90 + Math.round((clampedPercent / 100) * 8);
           const label =
             p.phase === 'loading-model'
               ? httpMode

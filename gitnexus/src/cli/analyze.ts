@@ -692,6 +692,10 @@ export interface AnalyzeOptions {
   embeddingAuthToken?: string;
   /** Embedding vector dimensions (positive integer string). Overrides GITNEXUS_EMBEDDING_DIMS. */
   embeddingDims?: string;
+  /** Opt in to LLM-generated semantic names and summaries for community clusters. */
+  enrichClusters?: boolean;
+  /** Number of community clusters per LLM enrichment request (positive integer string). */
+  clusterEnrichmentBatchSize?: string;
 }
 
 /**
@@ -917,6 +921,17 @@ const analyzeCommandImpl = async (
       return;
     }
     workerPoolSize = parsedWorkers;
+  }
+
+  let clusterEnrichmentBatchSize: number | undefined;
+  if (options.clusterEnrichmentBatchSize !== undefined) {
+    const parsed = Number(options.clusterEnrichmentBatchSize);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      cliError('  --cluster-enrichment-batch-size must be a positive integer.\n');
+      process.exitCode = 1;
+      return;
+    }
+    clusterEnrichmentBatchSize = parsed;
   }
 
   // Parse `--embeddings [limit]`: `true` → default cap, string → numeric cap
@@ -1149,27 +1164,37 @@ const analyzeCommandImpl = async (
   }
 
   // ── CLI progress bar setup ─────────────────────────────────────────
-  const barOptions: cliProgress.Options & { terminal?: CliProgressTerminal } = {
-    format: '  {bar} {percentage}% | {phase}',
-    barCompleteChar: '\u2588',
-    barIncompleteChar: '\u2591',
-    hideCursor: true,
-    barGlue: '',
-    autopadding: true,
-    clearOnComplete: false,
-    stopOnComplete: false,
-  };
-  if (process.env[RESPAWN_PROGRESS_ENV] === '1' && process.stderr.isTTY !== true) {
-    // Heap respawn pipes stderr so the parent can classify native/OOM crashes.
-    // The parent was a real TTY when it opted into this env var, so forward
-    // ANSI cursor controls through the pipe instead of cli-progress' non-TTY
-    // newline mode. That keeps one-line redraw UX while retaining stderr tail
-    // capture for diagnostics.
-    barOptions.terminal = createAnsiPipeTerminal(process.stderr);
+  // Explicit opt-in for durable, newline-per-update progress lines instead of
+  // the carriage-return-redrawn bar — useful for log-capturing automation
+  // where a `\r`-updated single line is either invisible or spams the log
+  // with partial-line noise. Deliberately NOT auto-triggered off `!isTTY`:
+  // cli-progress already has its own non-TTY fallback (see the
+  // RESPAWN_PROGRESS_ENV branch below), so this stays an explicit override.
+  const plainProgress =
+    process.env.GITNEXUS_PROGRESS === 'plain' || process.env.GITNEXUS_PROGRESS === '1';
+  let bar: cliProgress.SingleBar | undefined;
+  if (!plainProgress) {
+    const barOptions: cliProgress.Options & { terminal?: CliProgressTerminal } = {
+      format: '  {bar} {percentage}% | {phase}',
+      barCompleteChar: '\u2588',
+      barIncompleteChar: '\u2591',
+      hideCursor: true,
+      barGlue: '',
+      autopadding: true,
+      clearOnComplete: false,
+      stopOnComplete: false,
+    };
+    if (process.env[RESPAWN_PROGRESS_ENV] === '1' && process.stderr.isTTY !== true) {
+      // Heap respawn pipes stderr so the parent can classify native/OOM crashes.
+      // The parent was a real TTY when it opted into this env var, so forward
+      // ANSI cursor controls through the pipe instead of cli-progress' non-TTY
+      // newline mode. That keeps one-line redraw UX while retaining stderr tail
+      // capture for diagnostics.
+      barOptions.terminal = createAnsiPipeTerminal(process.stderr);
+    }
+    bar = new cliProgress.SingleBar(barOptions, cliProgress.Presets.shades_grey);
+    bar.start(100, 0, { phase: 'Initializing...' });
   }
-  const bar = new cliProgress.SingleBar(barOptions, cliProgress.Presets.shades_grey);
-
-  bar.start(100, 0, { phase: 'Initializing...' });
 
   // Graceful SIGINT handling. Pino's default destination is `sync: false`
   // (buffered) — flush before exit so in-flight records reach stderr.
@@ -1178,7 +1203,7 @@ const analyzeCommandImpl = async (
   const sigintHandler = () => {
     if (aborted) process.exit(1);
     aborted = true;
-    bar.stop();
+    bar?.stop();
     console.log('\n  Interrupted — cleaning up...');
     // Bounded CHECKPOINT-then-exit (#2264 review P3): skip the native close (the
     // LadybugDB destructor can double-free after --pdg writes), but don't hang
@@ -1207,9 +1232,9 @@ const analyzeCommandImpl = async (
   const origError = console.error.bind(console);
   let barCurrentValue = 0;
   const barLog = (...args: unknown[]) => {
-    process.stdout.write('\x1b[2K\r');
+    if (bar) process.stdout.write('\x1b[2K\r');
     origLog(args.map((a) => (typeof a === 'string' ? a : String(a))).join(' '));
-    bar.update(barCurrentValue);
+    bar?.update(barCurrentValue);
   };
   console.log = barLog;
   // eslint-disable-next-line no-console -- intentional console-routing for progress bar UX
@@ -1221,22 +1246,54 @@ const analyzeCommandImpl = async (
   // Track elapsed time per phase
   let lastPhaseLabel = 'Initializing...';
   let phaseStart = Date.now();
+  let lastPlainProgressAt = 0;
+  let lastPlainProgressValue = -1;
+
+  // Plain mode's counterpart to bar.update(): a durable, throttled newline log
+  // instead of a `\r`-redrawn line. Always forced (bypassing the throttle) on
+  // phase change or when the caller passes force=true (init/completion).
+  const emitPlainProgress = (value: number, phaseLabel: string, force = false) => {
+    const now = Date.now();
+    const percent = Math.max(0, Math.min(100, Math.round(value)));
+    if (!force && percent === lastPlainProgressValue && now - lastPlainProgressAt < 5_000) {
+      return;
+    }
+    lastPlainProgressAt = now;
+    lastPlainProgressValue = percent;
+    origLog(`  Progress ${percent}% | ${phaseLabel}`);
+  };
+
+  if (plainProgress) emitPlainProgress(0, 'Initializing...', true);
 
   const updateBar = (value: number, phaseLabel: string) => {
-    barCurrentValue = value;
-    if (phaseLabel !== lastPhaseLabel) {
+    // Clamp to [0, 100] and never move backward — the underlying phase
+    // percentages are computed independently per phase and are not
+    // guaranteed monotonic across a phase boundary.
+    const nextValue = Math.min(100, Math.max(0, value, barCurrentValue));
+    barCurrentValue = nextValue;
+    const phaseChanged = phaseLabel !== lastPhaseLabel;
+    if (phaseChanged) {
       lastPhaseLabel = phaseLabel;
       phaseStart = Date.now();
     }
     const elapsed = Math.round((Date.now() - phaseStart) / 1000);
     const display = elapsed >= 3 ? `${phaseLabel} (${formatElapsed(elapsed)})` : phaseLabel;
-    bar.update(value, { phase: display });
+    if (plainProgress) {
+      emitPlainProgress(nextValue, display, phaseChanged);
+    } else {
+      bar?.update(nextValue, { phase: display });
+    }
   };
 
   const elapsedTimer = setInterval(() => {
     const elapsed = Math.round((Date.now() - phaseStart) / 1000);
     if (elapsed >= 3) {
-      bar.update({ phase: `${lastPhaseLabel} (${formatElapsed(elapsed)})` });
+      const display = `${lastPhaseLabel} (${formatElapsed(elapsed)})`;
+      if (plainProgress) {
+        emitPlainProgress(barCurrentValue, display);
+      } else {
+        bar?.update({ phase: display });
+      }
     }
   }, 1000);
 
@@ -1290,6 +1347,12 @@ const analyzeCommandImpl = async (
         // Extra fetch-wrapper names from `.gitnexusrc` (#1589/#1852 residual);
         // forwarded to the routes phase consumer scan.
         fetchWrappers: options.fetchWrappers,
+        // Opt-in LLM cluster enrichment (--enrich-clusters / GITNEXUS_CLUSTER_ENRICHMENT).
+        // Threaded as a plain boolean + optional batch size; runFullAnalysis resolves
+        // the actual LLM client/config (env vars, saved config) before building the
+        // PipelineOptions.clusterEnrichment object the communities phase consumes.
+        clusterEnrichment: options.enrichClusters,
+        clusterEnrichmentBatchSize,
         // The CLI always process.exit()s after this returns (success path at the
         // end of analyzeCommandImpl, error/interrupt paths via process.exit too),
         // so the finalize close skips the native conn/db close — it can double-free
@@ -1339,7 +1402,7 @@ const analyzeCommandImpl = async (
       console.warn = origWarn;
       // eslint-disable-next-line no-console -- restoring after intentional progress-bar routing
       console.error = origError;
-      bar.stop();
+      bar?.stop();
       console.log('  Already up to date\n');
       if (baseRefRefreshed.length > 0) {
         console.log(
@@ -1359,7 +1422,7 @@ const analyzeCommandImpl = async (
       console.warn = origWarn;
       // eslint-disable-next-line no-console -- restoring after intentional progress-bar routing
       console.error = origError;
-      bar.stop();
+      bar?.stop();
       console.log('  FTS indexes repaired successfully\n');
       return;
     }
@@ -1446,8 +1509,12 @@ const analyzeCommandImpl = async (
     // eslint-disable-next-line no-console -- restoring after intentional progress-bar routing
     console.error = origError;
 
-    bar.update(100, { phase: 'Done' });
-    bar.stop();
+    if (bar) {
+      bar.update(100, { phase: 'Done' });
+      bar.stop();
+    } else if (plainProgress) {
+      emitPlainProgress(100, 'Done', true);
+    }
 
     // ── Summary ────────────────────────────────────────────────────
     const s = result.stats;
@@ -1483,7 +1550,7 @@ const analyzeCommandImpl = async (
     console.warn = origWarn;
     // eslint-disable-next-line no-console -- restoring after intentional progress-bar routing
     console.error = origError;
-    bar.stop();
+    bar?.stop();
 
     const msg = err instanceof Error ? err.message : String(err);
 
