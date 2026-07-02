@@ -126,9 +126,27 @@ function normalizeSwiftTypeName(text: string): string {
   return current;
 }
 
-/** `Foundation.URL` → `URL`. */
+/** True when the character at `index` in `s` sits inside an unclosed
+ *  `<>` / `[]` / `()` bracket — same depth-tracking as `hasTopLevelComma`,
+ *  indexed instead of scanned to completion. */
+function isInsideBrackets(s: string, index: number): boolean {
+  let depth = 0;
+  for (let i = 0; i < index; i++) {
+    const ch = s[i];
+    if (ch === '<' || ch === '[' || ch === '(') depth++;
+    else if (ch === '>' || ch === ']' || ch === ')') depth--;
+  }
+  return depth > 0;
+}
+
+/** `Foundation.URL` → `URL`. Leaves a dot nested inside brackets alone —
+ *  `stripGeneric` only unwraps single-arg wrappers, so a multi-arg generic
+ *  like `Result<Foundation.URL, Error>` reaches here unstripped; naive
+ *  `lastIndexOf('.')` would slice into its inner type list (`URL, Error>`)
+ *  instead of leaving the whole spelling alone as designed (see
+ *  `normalizeSwiftTypeName` docstring). */
 function stripQualifier(text: string): string {
   const lastDot = text.lastIndexOf('.');
-  if (lastDot === -1) return text;
+  if (lastDot === -1 || isInsideBrackets(text, lastDot)) return text;
   return text.slice(lastDot + 1);
 }

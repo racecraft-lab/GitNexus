@@ -54,4 +54,15 @@ describe('Swift type-name normalization (interpretSwiftTypeBinding)', () => {
     expect(normalized('Dictionary<String, User>')).toBe('Dictionary<String, User>');
     expect(normalized('[String: User]')).toBe('[String: User]');
   });
+
+  it('does not corrupt a module-qualified type nested inside a multi-arg generic', () => {
+    // `stripQualifier`'s naive `lastIndexOf('.')` used to slice into the
+    // multi-arg generic's inner type list instead of leaving the whole
+    // (deliberately unstripped) spelling alone — `Result<Foundation.URL,
+    // Error>` became `"URL, Error>"`.
+    expect(normalized('Result<Foundation.URL, Error>')).toBe('Result<Foundation.URL, Error>');
+    expect(normalized('Dictionary<String, Foundation.URL>')).toBe(
+      'Dictionary<String, Foundation.URL>',
+    );
+  });
 });
