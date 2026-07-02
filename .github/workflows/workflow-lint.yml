@@ -39,9 +39,15 @@ jobs:
       #   gh api repos/raven-actions/actionlint/git/refs/tags/v2.1.2
       # The action wraps the upstream `rhysd/actionlint` binary and emits
       # GitHub-annotation-formatted findings on PRs.
+      #
+      # `version` pins the actionlint BINARY itself — this input defaults to
+      # `latest`, which re-resolves on every run and drifts CI's lint
+      # behavior out from under this pin. Bump deliberately alongside the
+      # action version above.
       - name: Run actionlint
         uses: raven-actions/actionlint@205b530c5d9fa8f44ae9ed59f341a0db994aa6f8 # v2.1.2
         with:
+          version: 1.7.12
           fail-on-error: true
 
   zizmor:
