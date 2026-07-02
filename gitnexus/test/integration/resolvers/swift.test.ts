@@ -1587,3 +1587,34 @@ describe.skipIf(!swiftAvailable)('Swift module visibility', () => {
     ).toBeUndefined();
   });
 });
+
+// Ported from fork (15cfd158) `Swift closure-local receiver inference` describe.
+// Fork guarded on `!swiftRegistryPrimary` (registry flag removed upstream, #942);
+// stripped per the swift re-port convention. Isolated describe, single-file
+// fixture (same-file resolution — no cross-module dependency).
+describe.skipIf(!swiftAvailable)('Swift closure-local receiver inference', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'swift-closure-receiver-inference'),
+      () => {},
+    );
+  }, 60000);
+
+  it('resolves named closure parameters from collection element type', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const namedClosureCall = calls.find(
+      (c) => c.source === 'processClosures' && c.target === 'save',
+    );
+    expect(namedClosureCall).toBeDefined();
+    expect(namedClosureCall!.targetFilePath).toBe('Models.swift');
+  });
+
+  it('resolves shorthand $0 closure receivers from collection element type', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const saveCalls = calls.filter((c) => c.source === 'processClosures' && c.target === 'save');
+    expect(saveCalls.length).toBe(2);
+    expect(saveCalls.every((c) => c.targetFilePath === 'Models.swift')).toBe(true);
+  });
+});

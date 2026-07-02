@@ -34,6 +34,8 @@
 
 import type { Capture, CaptureMatch } from 'gitnexus-shared';
 import {
+  findChild,
+  findDescendant,
   nodeIfType,
   nodeToCapture,
   syntheticCapture,
@@ -304,7 +306,118 @@ export function emitSwiftScopeCaptures(
   // drops for registry-primary languages (issue #1951).
   out.push(...synthesizeSwiftInheritanceReferences(tree.rootNode));
 
+  // ── Closure-local receiver inference ──────────────────────────────────
+  // `users.forEach { user in … }` / `users.map { $0.save() }` bind the
+  // closure parameter (`user`, or shorthand `$0`) to the ELEMENT type of the
+  // iterated collection, so member calls on it resolve. Ports the fork's
+  // `closureElementBindings` (15cfd158) onto the registry-primary
+  // `@type-binding` path (the type-env for-loop path is a documented no-op
+  // for call resolution — see swift.test.ts `for-in loop` note).
+  out.push(...synthesizeSwiftClosureReceiverBindings(tree.rootNode));
+
   return out;
+}
+
+/** Swift collection methods whose trailing-closure parameter is the
+ *  collection's element type. Mirrors the fork's COLLECTION_CLOSURE_METHODS. */
+const COLLECTION_CLOSURE_METHODS: ReadonlySet<string> = new Set([
+  'forEach',
+  'map',
+  'compactMap',
+  'flatMap',
+  'filter',
+  'reduce',
+  'sorted',
+  'contains',
+  'first',
+]);
+
+/**
+ * Synthesize `@type-binding.alias` captures binding a collection-closure
+ * parameter to the collection's element type:
+ *   `users.forEach { user in user.save() }` → `user : [User]`
+ *   `users.map { $0.save() }`               → `$0   : [User]`
+ * The bound type is the collection's declared type TEXT (`[User]`), which
+ * `interpretSwiftTypeBinding` normalizes to the element type `User`. Anchored
+ * on the `lambda_literal` so the binding lands in the same scope as the
+ * closure-body member-call references it types.
+ *
+ * AST (tree-sitter-swift 0.7.1, verified):
+ *   call_expression
+ *     navigation_expression   (users.forEach)
+ *     call_suffix > lambda_literal
+ *       lambda_function_type > lambda_function_type_parameters
+ *                              > lambda_parameter > simple_identifier   (named)
+ *       statements …                                                    ($0 shorthand)
+ */
+function synthesizeSwiftClosureReceiverBindings(root: SyntaxNode): CaptureMatch[] {
+  const out: CaptureMatch[] = [];
+  walkNamedTree(root, (node) => {
+    if (node.type !== 'call_expression') return;
+    const callee = node.firstNamedChild;
+    if (callee === null || callee.type !== 'navigation_expression') return;
+    const receiver = callee.firstNamedChild;
+    if (receiver === null || receiver.type !== 'simple_identifier') return;
+    const suffix = callee.lastNamedChild;
+    const member =
+      suffix?.type === 'navigation_suffix' ? suffix.lastNamedChild?.text : undefined;
+    if (member === undefined || !COLLECTION_CLOSURE_METHODS.has(member)) return;
+
+    const callSuffix = findChild(node, 'call_suffix');
+    if (callSuffix === null) return;
+    const lambda = findChild(callSuffix, 'lambda_literal');
+    if (lambda === null) return;
+
+    const collectionType = swiftIdentifierDeclaredTypeText(receiver.text, node);
+    if (collectionType === null) return;
+
+    const paramNames = swiftLambdaParameterNames(lambda);
+    const names =
+      paramNames.length > 0 ? paramNames : lambda.text.includes('$0') ? ['$0'] : [];
+    for (const name of names) {
+      out.push({
+        '@type-binding.alias': nodeToCapture('@type-binding.alias', lambda),
+        '@type-binding.name': syntheticCapture('@type-binding.name', lambda, name),
+        '@type-binding.type': syntheticCapture('@type-binding.type', lambda, collectionType),
+      });
+    }
+  });
+  return out;
+}
+
+/** Collect the explicit parameter names of a `lambda_literal`
+ *  (`{ a, b in … }` → `['a','b']`). Empty when the closure uses shorthand
+ *  (`$0`) arguments. */
+function swiftLambdaParameterNames(lambda: SyntaxNode): string[] {
+  const paramsNode = findDescendant(lambda, 'lambda_function_type_parameters');
+  if (paramsNode === null) return [];
+  const names: string[] = [];
+  for (let i = 0; i < paramsNode.namedChildCount; i++) {
+    const p = paramsNode.namedChild(i);
+    if (p === null || p.type !== 'lambda_parameter') continue;
+    const nameNode = findDescendant(p, 'simple_identifier');
+    if (nameNode !== null) names.push(nameNode.text);
+  }
+  return names;
+}
+
+/** Resolve the declared type TEXT of a simple identifier by scanning the
+ *  parameters of each enclosing function-like ancestor (e.g. `users` →
+ *  `[User]` for `func f(users: [User])`). Returns null when no annotated
+ *  declaration is found. */
+function swiftIdentifierDeclaredTypeText(name: string, fromNode: SyntaxNode): string | null {
+  let cur: SyntaxNode | null = fromNode.parent;
+  while (cur !== null) {
+    for (let i = 0; i < cur.namedChildCount; i++) {
+      const child = cur.namedChild(i);
+      if (child === null || child.type !== 'parameter') continue;
+      const pName = child.childForFieldName('name');
+      const pType = child.childForFieldName('type');
+      if (pName?.text === name && pType !== null) return pType.text;
+    }
+    cur = cur.parent;
+  }
+  return null;
 }
 
 /**

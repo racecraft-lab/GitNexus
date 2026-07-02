@@ -44,8 +44,8 @@
     "digest": "0f24da4a75540ea1249d9f84d88e4275a49195f2779c43b9ea52499c7679e610"
   },
   "swift-closure-receiver-inference/Models.swift": {
-    "captureGroups": 13,
-    "digest": "9befae4d3846bcbb9a9996cb5e00117248e53e76c7267acad7f4165215d258dc"
+    "captureGroups": 15,
+    "digest": "34b5323b033d3957811ef04dff20eb567ec6894b1d62cad677e3128075f32a41"
   },
   "swift-constructor-fallback/App.swift": {
     "captureGroups": 7,
