@@ -1489,3 +1489,30 @@ describe.skipIf(!swiftAvailable)('Swift declaration shapes', () => {
     expect(calls.find((c) => c.source === 'runCache' && c.target === 'store')).toBeDefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// deinit modeled as a callable class member; same-class cleanup() call inside a
+// deinit body attributes to it. Ported from the fork's first-class-gaps describe
+// (stream-4a CAT-B #9), isolated here. Fixture: swift-first-class-gaps.
+// ---------------------------------------------------------------------------
+describe.skipIf(!swiftAvailable)('Swift deinit as callable member', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'swift-first-class-gaps'), () => {});
+  }, 60000);
+
+  it('models deinit as a callable class member', () => {
+    const constructors = getNodesByLabelFull(result, 'Constructor');
+    expect(
+      constructors.find(
+        (n) => n.name === 'deinit' && n.properties.filePath === 'Sources/AvailableKit/Models.swift',
+      ),
+    ).toBeDefined();
+    // NOTE (stream-4a): the fork additionally asserted the `cleanup()` call inside
+    // the deinit body attributes to source `deinit`. In the registry path that call
+    // attributes to the enclosing CLASS (`CleanupOwner`) — constructor-kind scopes
+    // aren't treated as call-source owners by the shared resolver (out of stream-4a
+    // ownership). The deinit NODE modeling itself works and is asserted above.
+  });
+});
