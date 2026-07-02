@@ -1020,9 +1020,10 @@ export const isRepoRegistered = async (repoPath: string): Promise<boolean> => {
  * Throws {@link AnalysisNotFinalizedError} on the first failure with the
  * specific missing artifact. Pure read — does not mutate disk state.
  *
- * The `alreadyUpToDate` early-return path must re-register the existing meta
- * before callers run this assertion, so stale registry entries are repaired
- * without forcing a full rebuild.
+ * When a registry entry is missing or unfinalized, this assertion deliberately
+ * throws with an actionable diagnostic message pointing the user to re-run
+ * a full `analyze` (see #1169 for design rationale). There is no automatic
+ * self-healing; the registry must be consistent with disk state.
  */
 export const assertAnalysisFinalized = async (repoPath: string): Promise<void> => {
   const resolved = path.resolve(repoPath);
