@@ -315,6 +315,12 @@ export function emitSwiftScopeCaptures(
   // for call resolution — see swift.test.ts `for-in loop` note).
   out.push(...synthesizeSwiftClosureReceiverBindings(tree.rootNode));
 
+  // ── Pattern-receiver bindings ─────────────────────────────────────────
+  // Tuple destructuring, switch-case tuple bindings, and while-let — extends
+  // if-let/guard-let optional-binding inference to these shapes so member
+  // calls on the bound names resolve (fork port, 15cfd158).
+  out.push(...synthesizeSwiftPatternBindings(tree.rootNode));
+
   return out;
 }
 
@@ -368,21 +374,29 @@ function synthesizeSwiftClosureReceiverBindings(root: SyntaxNode): CaptureMatch[
     const lambda = findChild(callSuffix, 'lambda_literal');
     if (lambda === null) return;
 
-    const collectionType = swiftIdentifierDeclaredTypeText(receiver.text, node);
-    if (collectionType === null) return;
+    const collectionTypeNode = swiftIdentifierDeclaredTypeNode(receiver.text, node);
+    if (collectionTypeNode === null) return;
+    const collectionType = collectionTypeNode.text;
 
     const paramNames = swiftLambdaParameterNames(lambda);
     const names =
       paramNames.length > 0 ? paramNames : lambda.text.includes('$0') ? ['$0'] : [];
     for (const name of names) {
-      out.push({
-        '@type-binding.alias': nodeToCapture('@type-binding.alias', lambda),
-        '@type-binding.name': syntheticCapture('@type-binding.name', lambda, name),
-        '@type-binding.type': syntheticCapture('@type-binding.type', lambda, collectionType),
-      });
+      out.push(swiftTypeBindingAlias(lambda, name, collectionType));
     }
   });
   return out;
+}
+
+/** Build a `@type-binding.alias` capture (name → raw type text). The
+ *  interpreter normalizes the raw type (`[User]` → `User`) and places it in
+ *  the anchor's scope `typeBindings`. */
+function swiftTypeBindingAlias(anchor: SyntaxNode, name: string, rawType: string): CaptureMatch {
+  return {
+    '@type-binding.alias': nodeToCapture('@type-binding.alias', anchor),
+    '@type-binding.name': syntheticCapture('@type-binding.name', anchor, name),
+    '@type-binding.type': syntheticCapture('@type-binding.type', anchor, rawType),
+  };
 }
 
 /** Collect the explicit parameter names of a `lambda_literal`
@@ -401,11 +415,11 @@ function swiftLambdaParameterNames(lambda: SyntaxNode): string[] {
   return names;
 }
 
-/** Resolve the declared type TEXT of a simple identifier by scanning the
+/** Resolve the declared TYPE NODE of a simple identifier by scanning the
  *  parameters of each enclosing function-like ancestor (e.g. `users` →
  *  `[User]` for `func f(users: [User])`). Returns null when no annotated
  *  declaration is found. */
-function swiftIdentifierDeclaredTypeText(name: string, fromNode: SyntaxNode): string | null {
+function swiftIdentifierDeclaredTypeNode(name: string, fromNode: SyntaxNode): SyntaxNode | null {
   let cur: SyntaxNode | null = fromNode.parent;
   while (cur !== null) {
     for (let i = 0; i < cur.namedChildCount; i++) {
@@ -413,11 +427,143 @@ function swiftIdentifierDeclaredTypeText(name: string, fromNode: SyntaxNode): st
       if (child === null || child.type !== 'parameter') continue;
       const pName = child.childForFieldName('name');
       const pType = child.childForFieldName('type');
-      if (pName?.text === name && pType !== null) return pType.text;
+      if (pName?.text === name && pType !== null) return pType;
     }
     cur = cur.parent;
   }
   return null;
+}
+
+/** Element type texts of a variable whose declared type is a `tuple_type`
+ *  (e.g. `pair: (User, Repo)` → `['User', 'Repo']`). Null when the variable's
+ *  type isn't a tuple. Each element is the tuple item's type text. */
+function swiftTupleElementTypes(varName: string, fromNode: SyntaxNode): string[] | null {
+  const typeNode = swiftIdentifierDeclaredTypeNode(varName, fromNode);
+  if (typeNode === null || typeNode.type !== 'tuple_type') return null;
+  const elems: string[] = [];
+  for (let i = 0; i < typeNode.namedChildCount; i++) {
+    const item = typeNode.namedChild(i);
+    if (item === null || item.type !== 'tuple_type_item') continue;
+    const t = item.lastNamedChild; // labeled `(a: User)` or bare `(User)` → the type
+    if (t !== null) elems.push(t.text);
+  }
+  return elems.length > 0 ? elems : null;
+}
+
+/** Bound identifier names of a destructuring pattern, in order, skipping the
+ *  wildcard `_` (e.g. `(tupleUser, tupleRepo)` → `['tupleUser','tupleRepo']`). */
+function collectSwiftPatternIdentifiers(node: SyntaxNode | null): string[] {
+  if (node === null) return [];
+  const out: string[] = [];
+  const visit = (cur: SyntaxNode): void => {
+    if (cur.type === 'simple_identifier') {
+      if (cur.text !== '_') out.push(cur.text);
+      return;
+    }
+    for (let i = 0; i < cur.namedChildCount; i++) {
+      const child = cur.namedChild(i);
+      if (child !== null) visit(child);
+    }
+  };
+  visit(node);
+  return out;
+}
+
+/** Nearest ancestor of a given node type, or null. */
+function swiftEnclosingOfType(node: SyntaxNode, type: string): SyntaxNode | null {
+  let cur: SyntaxNode | null = node.parent;
+  while (cur !== null) {
+    if (cur.type === type) return cur;
+    cur = cur.parent;
+  }
+  return null;
+}
+
+/** Single generic argument text of a `user_type` (e.g. `AnyIterator<User>` →
+ *  `User`). Null unless the type has exactly one generic argument. Used to
+ *  infer a `while let x = iterator.next()` element type from the iterator's
+ *  generic parameter. */
+function swiftSingleGenericArgText(typeNode: SyntaxNode): string | null {
+  if (typeNode.type !== 'user_type') return null;
+  const typeArgs = findChild(typeNode, 'type_arguments');
+  if (typeArgs === null) return null;
+  const args: SyntaxNode[] = [];
+  for (let i = 0; i < typeArgs.namedChildCount; i++) {
+    const a = typeArgs.namedChild(i);
+    if (a !== null) args.push(a);
+  }
+  return args.length === 1 ? args[0].text : null;
+}
+
+/**
+ * Pattern-receiver binding synthesis — extends optional-binding inference
+ * (if-let / guard-let) to three more Swift binding shapes so member calls on
+ * the bound names resolve. Ports the fork's `tupleDestructuringBindings`,
+ * `switchPatternBindings`, and while-let handling (15cfd158) onto the
+ * registry-primary `@type-binding` path:
+ *
+ *   let (tupleUser, tupleRepo) = pair          // tuple destructuring
+ *   switch pair { case let (a, b): … }         // switch-case tuple binding
+ *   while let nextUser = iterator.next() { … }  // while-let
+ *
+ * Tuple/switch bindings read the destructured variable's `tuple_type`
+ * elements; while-let binds to the iterator's single generic argument
+ * (`AnyIterator<User>` → `User`). Anchored on the enclosing statement so each
+ * binding co-locates with its body's reference sites.
+ */
+function synthesizeSwiftPatternBindings(root: SyntaxNode): CaptureMatch[] {
+  const out: CaptureMatch[] = [];
+  walkNamedTree(root, (node) => {
+    if (node.type === 'property_declaration') {
+      // `let (a, b) = pair` — tuple destructuring of a tuple-typed value.
+      const value = node.childForFieldName('value');
+      const namePattern = node.childForFieldName('name');
+      if (value === null || value.type !== 'simple_identifier' || namePattern === null) return;
+      const names = collectSwiftPatternIdentifiers(namePattern);
+      if (names.length < 2) return; // single binding isn't tuple destructuring
+      const elems = swiftTupleElementTypes(value.text, node);
+      if (elems === null) return;
+      names.slice(0, elems.length).forEach((n, i) => out.push(swiftTypeBindingAlias(node, n, elems[i])));
+    } else if (node.type === 'switch_entry') {
+      // `case let (a, b):` over a tuple-typed switch subject.
+      const switchNode = swiftEnclosingOfType(node, 'switch_statement');
+      if (switchNode === null) return;
+      const subject = switchNode.childForFieldName('expr') ?? switchNode.firstNamedChild;
+      if (subject === null || subject.type !== 'simple_identifier') return;
+      const elems = swiftTupleElementTypes(subject.text, node);
+      if (elems === null) return;
+      const names = collectSwiftPatternIdentifiers(findDescendant(node, 'switch_pattern'));
+      names.slice(0, elems.length).forEach((n, i) => out.push(swiftTypeBindingAlias(node, n, elems[i])));
+    } else if (node.type === 'while_statement') {
+      // `while let x = iterator.next()` — bind x to the iterator's element.
+      let sawLet = false;
+      let bound: SyntaxNode | null = null;
+      let value: SyntaxNode | null = null;
+      for (let i = 0; i < node.namedChildCount; i++) {
+        const child = node.namedChild(i);
+        if (child === null) continue;
+        if (child.type === 'value_binding_pattern') {
+          sawLet = true;
+        } else if (sawLet && bound === null && child.type === 'simple_identifier') {
+          bound = child;
+        } else if (bound !== null && value === null && child.type === 'call_expression') {
+          value = child;
+          break;
+        }
+      }
+      if (bound === null || value === null) return;
+      const callee = value.firstNamedChild;
+      if (callee === null || callee.type !== 'navigation_expression') return;
+      const recv = callee.firstNamedChild;
+      if (recv === null || recv.type !== 'simple_identifier') return;
+      const recvType = swiftIdentifierDeclaredTypeNode(recv.text, node);
+      if (recvType === null) return;
+      const elem = swiftSingleGenericArgText(recvType);
+      if (elem === null) return;
+      out.push(swiftTypeBindingAlias(node, bound.text, elem));
+    }
+  });
+  return out;
 }
 
 /**

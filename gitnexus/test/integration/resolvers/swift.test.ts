@@ -1618,3 +1618,23 @@ describe.skipIf(!swiftAvailable)('Swift closure-local receiver inference', () =>
     expect(saveCalls.every((c) => c.targetFilePath === 'Models.swift')).toBe(true);
   });
 });
+
+// Ported from fork (15cfd158) `Swift first-class static support edge cases`
+// describe — the pattern-receiver `it` only, as an isolated describe (the
+// other its in that fork describe cover BLOCKED shared-resolver capabilities;
+// 0-skip rule forbids porting them red). Fixture: swift-first-class-gaps.
+describe.skipIf(!swiftAvailable)('Swift pattern-receiver inference', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'swift-first-class-gaps'), () => {});
+  }, 60000);
+
+  it('resolves tuple, switch-case, and while-let pattern receiver types', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const saveCalls = calls.filter((c) => c.source === 'patternFlow' && c.target === 'save');
+    expect(
+      saveCalls.filter((c) => c.targetFilePath === 'Sources/AvailableKit/Models.swift').length,
+    ).toBeGreaterThanOrEqual(5);
+  });
+});

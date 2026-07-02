@@ -124,8 +124,8 @@
     "digest": "62e0574e3d9385479ac88403ab4e8118c3818dfee7ee735901d23239fae8e9fa"
   },
   "swift-first-class-gaps/Sources/App/main.swift": {
-    "captureGroups": 61,
-    "digest": "4cad7c0eb8028c649faab1c00f4654301521d0e17295fdd4147eb547ed1a6282"
+    "captureGroups": 66,
+    "digest": "42af6142515e863893a0e35dd4aec39434a4f221910307d213f027155de6ea16"
   },
   "swift-first-class-gaps/Sources/AvailableKit/Models.swift": {
     "captureGroups": 91,
