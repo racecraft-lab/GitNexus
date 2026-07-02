@@ -51,6 +51,13 @@ export const walkRepositoryPaths = async (
       batch.map(async (relativePath) => {
         const fullPath = path.join(repoPath, relativePath);
         const stat = await fs.stat(fullPath);
+        // Filter symlinks-to-directories (and any other non-regular file the
+        // glob pre-filter let through). `nodir: true` only excludes literal
+        // directories — a symlink whose target is a directory still satisfies
+        // the glob filter, then crashes downstream `fs.readFile` with EISDIR.
+        if (!stat.isFile()) {
+          return null;
+        }
         if (stat.size > maxFileSizeBytes) {
           skippedLarge++;
           skippedLargePaths.push(relativePath.replace(/\\/g, '/'));

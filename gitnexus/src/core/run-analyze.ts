@@ -138,8 +138,16 @@ export function _shouldUseAnalyzeFastPath(
   return !(options.embeddings && existingEmbeddingCount === 0);
 }
 
-/** Threshold: auto-skip embeddings for repos with more nodes than this */
-const EMBEDDING_NODE_LIMIT = 50_000;
+/** Threshold: auto-skip embeddings for repos with more nodes than this.
+ *  Override via `GITNEXUS_EMBEDDING_NODE_LIMIT` env var (positive integer). */
+const EMBEDDING_NODE_LIMIT = (() => {
+  const raw = process.env.GITNEXUS_EMBEDDING_NODE_LIMIT;
+  if (raw) {
+    const parsed = Number.parseInt(raw, 10);
+    if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  }
+  return 50_000;
+})();
 const CLUSTER_ENRICHMENT_SYSTEM_PROMPT =
   'You produce concise JSON only. Do not include markdown fences or prose.';
 
