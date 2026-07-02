@@ -52,6 +52,7 @@ import {
   loadMeta,
   ensureGitNexusIgnored,
   registerRepo,
+  isRepoRegistered,
   cleanupOldKuzuFiles,
   INCREMENTAL_SCHEMA_VERSION,
   type RepoMeta,
@@ -917,6 +918,20 @@ export async function runFullAnalysis(
           return true; // conservative on git failure
         }
       })();
+      // Registration wrinkle around the fast path (#2264). A prior
+      // `analyze --name X` that hit a name collision writes meta.json (meta-save
+      // runs before registerRepo) then fails before registering, leaving the
+      // index up-to-date but UNREGISTERED. When the user re-runs with
+      // --allow-duplicate-name they explicitly want it registered, so fall
+      // through to the pipeline (which registers it, honoring the flag) instead
+      // of early-returning an unregistered repo the flag could never heal.
+      // For a PLAIN analyze we deliberately do NOT self-heal: an up-to-date but
+      // unregistered repo early-returns here and the CLI's assertAnalysisFinalized
+      // surfaces it as a hard failure (#1169) rather than silently registering a
+      // possibly half-finalized index. `isRepoRegistered` is only read on the
+      // opt-in branch so the common fast path keeps its single-stat cost.
+      const healUnregistered =
+        options.allowDuplicateName === true && !(await isRepoRegistered(repoPath));
       // `--embeddings` explicitly asks for embeddings, but a repo with 0
       // stored embeddings (never embedded, or wiped by a prior
       // --drop-embeddings) has nothing for the fast path to "preserve" —
@@ -925,30 +940,16 @@ export async function runFullAnalysis(
       // pipeline instead, which will generate them.
       const embeddingsRequestedButMissing =
         options.embeddings === true && existingEmbeddingCount === 0;
-      if (!dirty && !embeddingsRequestedButMissing) {
+      if (!dirty && !healUnregistered && !embeddingsRequestedButMissing) {
         await ensureGitNexusIgnored(repoPath);
-        // Registration wrinkle around the fast path (#1169/#2264): a prior
-        // `analyze` can write meta.json (meta-save runs before registerRepo in
-        // the full pipeline finalize) and then fail — or the global registry
-        // can simply be lost/rebuilt out from under an up-to-date index —
-        // leaving a fully-finalized index UNREGISTERED. `assertAnalysisFinalized`
-        // (repo-manager.ts) documents this fast path as required to re-register
-        // the existing meta before that assertion runs, so a stale/missing
-        // registry entry self-heals here without forcing a full rebuild.
-        // `registerRepo` is idempotent for the common (no explicit `--name`)
-        // case; it only throws `RegistryNameCollisionError` when the user
-        // passed a colliding `--name` without `--allow-duplicate-name`, same
-        // as the full pipeline path — a real, actionable error, not silence.
-        const repoName = await registerRepo(repoPath, existingMeta, {
-          name: options.registryName,
-          allowDuplicateName: options.allowDuplicateName,
-          // Non-primary branch runs upsert into branches[]; the primary/flat
-          // run (placement.branch === undefined) refreshes the top-level
-          // fields — mirrors the full pipeline's registerRepo call (#2106).
-          branch: placement.branch,
-        });
         return {
-          repoName,
+          // `resolveRepoIdentityRoot` collapses worktree roots to the
+          // canonical repo basename (#1259) but leaves arbitrary subdirs
+          // and `--skip-git` paths unchanged (#1232/#1233 intent preserved).
+          repoName:
+            options.registryName ??
+            getInferredRepoName(repoPath) ??
+            path.basename(resolveRepoIdentityRoot(repoPath)),
           repoPath,
           stats: existingMeta.stats ?? {},
           alreadyUpToDate: true,

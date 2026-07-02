@@ -421,7 +421,7 @@ describe('CLI end-to-end', () => {
     }
   }, 60_000);
 
-  it('already-up-to-date analyze repairs a missing registry entry (#1169)', () => {
+  it('already-up-to-date analyze hard-fails with an actionable diagnostic when the registry entry is missing (#1169)', () => {
     const gnHome = fs.mkdtempSync(path.join(os.tmpdir(), 'gn-1169-fastpath-home-'));
     const repo = makeMiniRepoCopy('mini-repo', 'gn-1169-fastpath-repo-');
     const repoParent = path.dirname(repo);
@@ -445,31 +445,31 @@ describe('CLI end-to-end', () => {
       // because the global registry entry is missing.
       fs.writeFileSync(path.join(gnHome, 'registry.json'), '[]', 'utf-8');
 
+      // The alreadyUpToDate fast path deliberately does NOT self-heal a
+      // missing registry entry — it surfaces AnalysisNotFinalizedError with
+      // an actionable diagnostic instead of silently registering a possibly
+      // half-finalized index (repo-manager.ts AnalysisNotFinalizedError doc
+      // comment; cli/analyze.ts's dedicated handler, both citing #1169).
       const second = runCliWithEnv(['analyze'], repo, { GITNEXUS_HOME: gnHome }, 60000);
       expect(
         second.status,
         [
-          'second analyze failed to repair alreadyUpToDate finalization',
+          'expected the second analyze to hard-fail (AnalysisNotFinalizedError), not exit 0',
           `stdout: ${second.stdout}`,
           `stderr: ${second.stderr}`,
         ].join('\n'),
-      ).toBe(0);
-      expect(`${second.stdout}${second.stderr}`).toMatch(/Already up to date/i);
+      ).not.toBe(0);
+      expect(second.stderr).toMatch(/Analysis did not finalize/i);
+      expect(second.stderr).toMatch(/registry entry/i);
+      expect(second.stderr).toMatch(/Diagnostic checklist/i);
 
+      // No silent side effect: the registry stays exactly as the test left
+      // it (empty), proving the fast path didn't quietly register anything
+      // before throwing.
       const entries = JSON.parse(
         fs.readFileSync(path.join(gnHome, 'registry.json'), 'utf-8'),
-      ) as Array<{
-        path: string;
-      }>;
-      const matchesRepo = entries.some((e) => {
-        const a = fs.realpathSync.native(e.path);
-        const b = fs.realpathSync.native(repo);
-        return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
-      });
-      expect(
-        matchesRepo,
-        `registry has no repaired entry for ${repo}; entries: ${JSON.stringify(entries.map((e) => e.path))}`,
-      ).toBe(true);
+      ) as Array<{ path: string }>;
+      expect(entries).toEqual([]);
     } finally {
       cleanupTempDirSync(gnHome);
       cleanupTempDirSync(repoParent);
