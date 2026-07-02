@@ -870,7 +870,8 @@ export async function runFullAnalysis(
       // taking it here would silently strand the user with zero
       // embeddings despite passing --embeddings. Fall through to the full
       // pipeline instead, which will generate them.
-      const embeddingsRequestedButMissing = options.embeddings === true && existingEmbeddingCount === 0;
+      const embeddingsRequestedButMissing =
+        options.embeddings === true && existingEmbeddingCount === 0;
       if (!dirty && !healUnregistered && !embeddingsRequestedButMissing) {
         await ensureGitNexusIgnored(repoPath);
         return {
@@ -981,7 +982,11 @@ export async function runFullAnalysis(
     repoPath,
     (p) => {
       const phaseLabel = PHASE_LABELS[p.phase] || p.phase;
-      const scaled = Math.round(p.percent * 0.6);
+      // Clamp defensively before scaling: a malformed (NaN/negative/>100)
+      // percent from a pipeline phase must not propagate into an out-of-range
+      // display value.
+      const clampedPercent = Number.isFinite(p.percent) ? Math.min(100, Math.max(0, p.percent)) : 0;
+      const scaled = Math.round(clampedPercent * 0.6);
       const message = p.detail
         ? `${p.message || phaseLabel} (${p.detail})`
         : p.message || phaseLabel;
@@ -1401,7 +1406,12 @@ export async function runFullAnalysis(
         executeQuery,
         executeWithReusedStatement,
         (p) => {
-          const scaled = 90 + Math.round((p.percent / 100) * 8);
+          // Clamp defensively before scaling — see the pipeline-progress
+          // callback above for why.
+          const clampedPercent = Number.isFinite(p.percent)
+            ? Math.min(100, Math.max(0, p.percent))
+            : 0;
+          const scaled = 90 + Math.round((clampedPercent / 100) * 8);
           const label =
             p.phase === 'loading-model'
               ? httpMode
