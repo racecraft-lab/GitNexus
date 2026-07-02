@@ -51,9 +51,10 @@
     "_note": "F62: + scope_resolution class/module declaration captures \u2014 fixture count 78\u219281, fingerprint drift expected. #1975: + ruby-tail-collision fixture (Foo::Bar vs Baz::Bar stay distinct nodes) \u2014 pure fixture-corpus drift, scope-extractor captures unchanged; 81\u219282. #1991: + ruby-nested-mixin-tail-collision fixture (85\u219286). Recomputed on the #942 merge (fixture-comment rewording shifts capture byte-positions, capture LOGIC unchanged): bf6b13a -> b5ea93bb."
   },
   "swift": {
-    "fingerprint": "180ac68e780bdf6f9089d53f51cbb9a66aed3e7774631cc3fcbaae5020213998",
+    "fingerprint": "1a6232d2c4adfe3ec2bbf2b3e640d205c83bbde88f5d59c8479fbca749a47fbc",
     "scaling_budget": 1.5,
-    "_rebaselined": "#1919 open-language coverage: new lang-resolution fixtures + intended capture additions (F5/F9 c-cpp, F26/F28/F29 dart, F47/F48/F49/F51/F52 kotlin, F75/F79 swift). Fingerprint-only drift; scaling_ratio ~1.0 (linear, no perf regression)."
+    "_rebaselined": "#1919 open-language coverage: new lang-resolution fixtures + intended capture additions (F5/F9 c-cpp, F26/F28/F29 dart, F47/F48/F49/F51/F52 kotlin, F75/F79 swift). Fingerprint-only drift; scaling_ratio ~1.0 (linear, no perf regression).",
+    "_note_sync_2026_07_02": "sync/upstream-2026-07-02 P4a Swift capability ports: implicit-self overload narrowing now threads argument labels, and stripQualifier gained dots-in-multi-arg-generics guarding — both add/adjust capture groups over the swift-* fixture corpus. Intended, ledgered capture drift (not a correctness regression); scaling stays linear (~1.3, well under the 1.5 budget across repeated local runs). fingerprint 180ac68e->1a6232d2."
   },
   "dart": {
     "fingerprint": "94bf2c26e1ba96f4211634aa572c0a989b503e717e75dfc5df04f66c417de80f",
