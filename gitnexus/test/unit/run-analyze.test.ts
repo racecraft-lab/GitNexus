@@ -1,7 +1,7 @@
 import { execSync } from 'child_process';
 import fs from 'fs/promises';
 import path from 'path';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   deriveEmbeddingMode,
   deriveEmbeddingCap,
@@ -15,6 +15,16 @@ import {
 } from '../../src/storage/repo-manager.js';
 import { taintModelVersion } from '../../src/core/ingestion/taint/typescript-model.js';
 import { createTempDir } from '../helpers/test-db.js';
+
+// The "fast path is skipped" regression test below (embeddings requested,
+// none stored) intentionally falls through into the real pipeline. On an
+// empty repo that pipeline is otherwise trivial, but embedding generation
+// unconditionally checks/loads a model first (embedding-pipeline.ts) — stub
+// readiness so that stays local instead of reaching for a real model.
+vi.mock('../../src/core/embeddings/embedder.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/core/embeddings/embedder.js')>();
+  return { ...actual, isEmbedderReady: () => true };
+});
 
 describe('run-analyze module', () => {
   it('exports runFullAnalysis as a function', async () => {
@@ -67,6 +77,95 @@ describe('run-analyze module', () => {
       await expect(
         fs.readFile(path.join(tmpRepo.dbPath, '.gitnexus', '.gitignore'), 'utf-8'),
       ).resolves.toBe('*\n');
+    } finally {
+      await tmpRepo.cleanup();
+    }
+  });
+
+  // Regression coverage for the fast-path embeddings gate: an up-to-date repo
+  // with 0 stored embeddings must not take the instant fast-path return when
+  // --embeddings is passed, or the embedding generation the caller explicitly
+  // asked for would be silently skipped.
+  it('does not use the fast path when --embeddings is requested but none are stored', async () => {
+    const tmpRepo = await createTempDir('gitnexus-run-analyze-embeddings-missing-');
+    try {
+      execSync('git init', { cwd: tmpRepo.dbPath, stdio: 'pipe' });
+      execSync('git -c user.name=test -c user.email=test@test commit --allow-empty -m init', {
+        cwd: tmpRepo.dbPath,
+        stdio: 'pipe',
+      });
+      const currentCommit = execSync('git rev-parse HEAD', {
+        cwd: tmpRepo.dbPath,
+        encoding: 'utf-8',
+      }).trim();
+      const { storagePath } = getStoragePaths(tmpRepo.dbPath);
+      const meta: RepoMeta = {
+        repoPath: tmpRepo.dbPath,
+        lastCommit: currentCommit,
+        indexedAt: new Date().toISOString(),
+        schemaVersion: INCREMENTAL_SCHEMA_VERSION,
+        stats: { embeddings: 0 },
+      };
+      await saveMeta(storagePath, meta);
+
+      // Avoid a real network install attempt for the VECTOR extension; the
+      // embedder itself is stubbed ready (see top-of-file mock) so no model
+      // download is attempted either.
+      const prevInstallPolicy = process.env.GITNEXUS_LBUG_EXTENSION_INSTALL;
+      process.env.GITNEXUS_LBUG_EXTENSION_INSTALL = 'never';
+      try {
+        const { runFullAnalysis } = await import('../../src/core/run-analyze.js');
+        const result = await runFullAnalysis(
+          tmpRepo.dbPath,
+          { embeddings: true },
+          { onProgress: () => {} },
+        );
+
+        // Falling through to the full pipeline (not the instant return above).
+        expect(result.alreadyUpToDate).not.toBe(true);
+      } finally {
+        if (prevInstallPolicy === undefined) {
+          delete process.env.GITNEXUS_LBUG_EXTENSION_INSTALL;
+        } else {
+          process.env.GITNEXUS_LBUG_EXTENSION_INSTALL = prevInstallPolicy;
+        }
+      }
+    } finally {
+      await tmpRepo.cleanup();
+    }
+  });
+
+  it('still uses the fast path when --embeddings is requested and embeddings are already present', async () => {
+    const tmpRepo = await createTempDir('gitnexus-run-analyze-embeddings-present-');
+    try {
+      execSync('git init', { cwd: tmpRepo.dbPath, stdio: 'pipe' });
+      execSync('git -c user.name=test -c user.email=test@test commit --allow-empty -m init', {
+        cwd: tmpRepo.dbPath,
+        stdio: 'pipe',
+      });
+      const currentCommit = execSync('git rev-parse HEAD', {
+        cwd: tmpRepo.dbPath,
+        encoding: 'utf-8',
+      }).trim();
+      const { storagePath } = getStoragePaths(tmpRepo.dbPath);
+      const meta: RepoMeta = {
+        repoPath: tmpRepo.dbPath,
+        lastCommit: currentCommit,
+        indexedAt: new Date().toISOString(),
+        schemaVersion: INCREMENTAL_SCHEMA_VERSION,
+        stats: { embeddings: 42 },
+      };
+      await saveMeta(storagePath, meta);
+
+      const { runFullAnalysis } = await import('../../src/core/run-analyze.js');
+      const result = await runFullAnalysis(
+        tmpRepo.dbPath,
+        { embeddings: true },
+        { onProgress: () => {} },
+      );
+
+      expect(result.alreadyUpToDate).toBe(true);
+      expect(result.stats).toEqual({ embeddings: 42 });
     } finally {
       await tmpRepo.cleanup();
     }

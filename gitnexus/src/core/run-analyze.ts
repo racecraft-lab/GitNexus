@@ -800,6 +800,10 @@ export async function runFullAnalysis(
     options = { ...options, force: true };
   }
 
+  // Read once up front so the fast-path gate below and the embedding-mode
+  // derivation further down agree on the same count.
+  const existingEmbeddingCount = existingMeta?.stats?.embeddings ?? 0;
+
   // ── Early-return: already up to date ──────────────────────────────
   if (existingMeta && !options.force && existingMeta.lastCommit === currentCommit) {
     // Non-git folders have currentCommit = '' — always rebuild since we can't detect changes
@@ -860,7 +864,14 @@ export async function runFullAnalysis(
       // opt-in branch so the common fast path keeps its single-stat cost.
       const healUnregistered =
         options.allowDuplicateName === true && !(await isRepoRegistered(repoPath));
-      if (!dirty && !healUnregistered) {
+      // `--embeddings` explicitly asks for embeddings, but a repo with 0
+      // stored embeddings (never embedded, or wiped by a prior
+      // --drop-embeddings) has nothing for the fast path to "preserve" —
+      // taking it here would silently strand the user with zero
+      // embeddings despite passing --embeddings. Fall through to the full
+      // pipeline instead, which will generate them.
+      const embeddingsRequestedButMissing = options.embeddings === true && existingEmbeddingCount === 0;
+      if (!dirty && !healUnregistered && !embeddingsRequestedButMissing) {
         await ensureGitNexusIgnored(repoPath);
         return {
           // `resolveRepoIdentityRoot` collapses worktree roots to the
@@ -897,7 +908,6 @@ export async function runFullAnalysis(
   let cachedEmbeddingNodeIds = new Set<string>();
   let cachedEmbeddings: CachedEmbedding[] = [];
 
-  const existingEmbeddingCount = existingMeta?.stats?.embeddings ?? 0;
   const {
     forceRegenerateEmbeddings,
     preserveExistingEmbeddings,
