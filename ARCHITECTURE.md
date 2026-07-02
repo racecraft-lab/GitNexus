@@ -99,14 +99,14 @@ scan → structure → [markdown, cobol] → parse → [routes, tools, orm]
 | `routes` | `routes.ts` | `parse` | Route nodes + HANDLES_ROUTE edges (Next.js, Expo, PHP, decorators) |
 | `tools` | `tools.ts` | `parse` | Tool nodes + HANDLES_TOOL edges |
 | `orm` | `orm.ts` | `parse` | QUERIES edges (Prisma, Supabase) |
-| `crossFile` | `cross-file.ts` + `cross-file-impl.ts` | `parse`, `routes`, `tools`, `orm` | Cross-file type propagation in topological import order |
+| `crossFile` | `cross-file.ts` | `parse`, `routes`, `tools`, `orm` | Cross-file type propagation in topological import order |
 | `scopeResolution` | `scope-resolution/pipeline/phase.ts` | `parse`, `crossFile`, `structure` | Binding/reference + inheritance edges; disposes BindingAccumulator |
 | `pruneLocalSymbols` | `prune-local-symbols.ts` | `scopeResolution` | Drops inert block-local `Const`/`Variable`/`Static` nodes (only a `File→DEFINES` edge) post-resolution |
 | `mro` | `mro.ts` | `crossFile`, `scopeResolution`, `pruneLocalSymbols`, `structure` | METHOD_OVERRIDES + METHOD_IMPLEMENTS edges |
 | `communities` | `communities.ts` | `mro`, `pruneLocalSymbols`, `structure` | Community nodes + MEMBER_OF edges (Leiden algorithm) |
 | `processes` | `processes.ts` | `communities`, `routes`, `tools`, `pruneLocalSymbols`, `structure` | Process nodes + STEP_IN_PROCESS edges |
 
-**Non-phase files in the same directory:** `parse-impl.ts`, `cross-file-impl.ts` (implementation), `wildcard-synthesis.ts` (whole-module import expansion), `types.ts`, `runner.ts`, `index.ts`.
+**Non-phase files in the same directory:** `parse-impl.ts` (implementation), `wildcard-synthesis.ts` (whole-module import expansion), `types.ts`, `runner.ts`, `index.ts`.
 
 ### DAG runner
 
