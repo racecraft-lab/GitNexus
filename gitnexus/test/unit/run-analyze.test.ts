@@ -171,6 +171,106 @@ describe('run-analyze module', () => {
     }
   });
 
+  // Regression coverage for the fast-path cluster-enrichment gate: an
+  // up-to-date, clean repo must not take the instant fast-path return when
+  // --enrich-clusters is passed, or the enrichment the caller explicitly
+  // asked for would be silently skipped (the fast path returns before the
+  // `communities` phase — and `resolveClusterEnrichment` downstream of it —
+  // ever runs).
+  it('does not use the fast path when --enrich-clusters is requested', async () => {
+    const tmpRepo = await createTempDir('gitnexus-run-analyze-enrich-clusters-requested-');
+    try {
+      execSync('git init', { cwd: tmpRepo.dbPath, stdio: 'pipe' });
+      execSync('git -c user.name=test -c user.email=test@test commit --allow-empty -m init', {
+        cwd: tmpRepo.dbPath,
+        stdio: 'pipe',
+      });
+      const currentCommit = execSync('git rev-parse HEAD', {
+        cwd: tmpRepo.dbPath,
+        encoding: 'utf-8',
+      }).trim();
+      const { storagePath } = getStoragePaths(tmpRepo.dbPath);
+      const meta: RepoMeta = {
+        repoPath: tmpRepo.dbPath,
+        lastCommit: currentCommit,
+        indexedAt: new Date().toISOString(),
+        schemaVersion: INCREMENTAL_SCHEMA_VERSION,
+        stats: { communities: 3 },
+      };
+      await saveMeta(storagePath, meta);
+
+      // No LLM API key must be reachable — `resolveClusterEnrichment` (called
+      // downstream, after the fast-path decision this test exercises) warns
+      // and no-ops without one, keeping this hermetic instead of attempting a
+      // real network call if the machine happens to have ambient LLM config.
+      const prevGitnexusKey = process.env.GITNEXUS_API_KEY;
+      const prevOpenAIKey = process.env.OPENAI_API_KEY;
+      const prevClusterKey = process.env.GITNEXUS_CLUSTER_ENRICHMENT_API_KEY;
+      const prevInstallPolicy = process.env.GITNEXUS_LBUG_EXTENSION_INSTALL;
+      delete process.env.GITNEXUS_API_KEY;
+      delete process.env.OPENAI_API_KEY;
+      delete process.env.GITNEXUS_CLUSTER_ENRICHMENT_API_KEY;
+      process.env.GITNEXUS_LBUG_EXTENSION_INSTALL = 'never';
+      try {
+        const { runFullAnalysis } = await import('../../src/core/run-analyze.js');
+        const result = await runFullAnalysis(
+          tmpRepo.dbPath,
+          { clusterEnrichment: true },
+          { onProgress: () => {} },
+        );
+
+        // Falling through to the full pipeline (not the instant return above).
+        expect(result.alreadyUpToDate).not.toBe(true);
+      } finally {
+        if (prevGitnexusKey === undefined) delete process.env.GITNEXUS_API_KEY;
+        else process.env.GITNEXUS_API_KEY = prevGitnexusKey;
+        if (prevOpenAIKey === undefined) delete process.env.OPENAI_API_KEY;
+        else process.env.OPENAI_API_KEY = prevOpenAIKey;
+        if (prevClusterKey === undefined) delete process.env.GITNEXUS_CLUSTER_ENRICHMENT_API_KEY;
+        else process.env.GITNEXUS_CLUSTER_ENRICHMENT_API_KEY = prevClusterKey;
+        if (prevInstallPolicy === undefined) {
+          delete process.env.GITNEXUS_LBUG_EXTENSION_INSTALL;
+        } else {
+          process.env.GITNEXUS_LBUG_EXTENSION_INSTALL = prevInstallPolicy;
+        }
+      }
+    } finally {
+      await tmpRepo.cleanup();
+    }
+  });
+
+  it('still uses the fast path when --enrich-clusters is not requested', async () => {
+    const tmpRepo = await createTempDir('gitnexus-run-analyze-enrich-clusters-not-requested-');
+    try {
+      execSync('git init', { cwd: tmpRepo.dbPath, stdio: 'pipe' });
+      execSync('git -c user.name=test -c user.email=test@test commit --allow-empty -m init', {
+        cwd: tmpRepo.dbPath,
+        stdio: 'pipe',
+      });
+      const currentCommit = execSync('git rev-parse HEAD', {
+        cwd: tmpRepo.dbPath,
+        encoding: 'utf-8',
+      }).trim();
+      const { storagePath } = getStoragePaths(tmpRepo.dbPath);
+      const meta: RepoMeta = {
+        repoPath: tmpRepo.dbPath,
+        lastCommit: currentCommit,
+        indexedAt: new Date().toISOString(),
+        schemaVersion: INCREMENTAL_SCHEMA_VERSION,
+        stats: { communities: 3 },
+      };
+      await saveMeta(storagePath, meta);
+
+      const { runFullAnalysis } = await import('../../src/core/run-analyze.js');
+      const result = await runFullAnalysis(tmpRepo.dbPath, {}, { onProgress: () => {} });
+
+      expect(result.alreadyUpToDate).toBe(true);
+      expect(result.stats).toEqual({ communities: 3 });
+    } finally {
+      await tmpRepo.cleanup();
+    }
+  });
+
   it('reports isPrimaryBranch false for an up-to-date non-primary branch (#2106 R2)', async () => {
     const tmpRepo = await createTempDir('gitnexus-run-analyze-nonprimary-');
     try {

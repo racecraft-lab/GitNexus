@@ -940,7 +940,25 @@ export async function runFullAnalysis(
       // pipeline instead, which will generate them.
       const embeddingsRequestedButMissing =
         options.embeddings === true && existingEmbeddingCount === 0;
-      if (!dirty && !healUnregistered && !embeddingsRequestedButMissing) {
+      // `--enrich-clusters`/`GITNEXUS_CLUSTER_ENRICHMENT` asks for LLM-generated
+      // cluster labels, but the persisted `RepoMeta.stats` has no queryable
+      // signal for "were the existing communities already enriched" (unlike
+      // `stats.embeddings` above) — the only place that's recorded is the
+      // `enrichedBy` column on live Community rows, and checking it here would
+      // cost the fast path a DB query it's specifically designed to avoid.
+      // So bypass the fast path unconditionally whenever enrichment is
+      // explicitly requested, mirroring `resolveClusterEnrichment`'s own
+      // "requested" check (options flag or env var) — same false-negative-safe
+      // spirit as the embeddings guard, just without the "missing" refinement.
+      const clusterEnrichmentRequested =
+        options.clusterEnrichment === true ||
+        parseTruthyEnv(process.env.GITNEXUS_CLUSTER_ENRICHMENT);
+      if (
+        !dirty &&
+        !healUnregistered &&
+        !embeddingsRequestedButMissing &&
+        !clusterEnrichmentRequested
+      ) {
         await ensureGitNexusIgnored(repoPath);
         return {
           // `resolveRepoIdentityRoot` collapses worktree roots to the
