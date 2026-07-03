@@ -1,5 +1,5 @@
 import type { MethodInfo } from '../method-types.js';
-import { SupportedLanguages } from 'gitnexus-shared';
+import { SupportedLanguages, type ParameterTypeClass } from 'gitnexus-shared';
 
 /** Languages where class overload signatures are declaration-only contracts
  *  that should collapse to the implementation body's node ID. */
@@ -84,20 +84,51 @@ export function typeTagForId(
     }
   }
 
-  // Build type tag from current method's parameter types and, for languages
-  // such as Swift, external labels. Same-type overloads need the labels to
-  // remain distinct in graph IDs.
+  // Build type tag from current method's parameter types.
   // Prefer rawType (preserves generic/template args like vector<int>) over
   // type (simplified by extractSimpleTypeName which strips generics).
   const types = currentInfo.parameters.map((p) => (p.rawType ?? p.type) as string);
-  const labels = currentInfo.parameters.map((p) => p.label ?? '');
-  const groupUsesLabels = sameArityGroup.some((info) =>
-    info.parameters.some((p) => p.label != null),
-  );
-  if (groupUsesLabels) {
-    return `~${types.map((type, i) => `${labels[i] ?? ''}:${type}`).join(',')}`;
-  }
   return `~${types.join(',')}`;
+}
+
+/**
+ * Compute an argument-label discriminator suffix for same-arity overloads that
+ * differ ONLY by external parameter labels (Swift `func find(id:)` vs
+ * `func find(name:)` — same name, same arity, same parameter TYPES, so
+ * `typeTagForId` cannot separate them and they would otherwise collapse to a
+ * single graph node).
+ *
+ * Returns `~L<labels>` for the current method when its same-name+same-arity
+ * collision group has ≥2 members whose label signatures are NOT all identical.
+ * Returns `''` otherwise: single overloads, languages without argument labels
+ * (all labels empty), and genuine same-label duplicates all keep their existing
+ * byte-stable node IDs. Deliberately narrow so only label-overloaded callables
+ * acquire a new ID shape.
+ */
+export function labelTagForId(
+  methodMap: Map<string, MethodInfo>,
+  methodName: string,
+  arity: number | undefined,
+  currentInfo: MethodInfo,
+  collisionGroups?: Map<string, MethodInfo[]>,
+): string {
+  if (arity === undefined || arity === 0) return '';
+
+  const currentLabels = currentInfo.parameters.map((p) => p.label ?? '');
+  // No labels at all → label-less language; never perturb its IDs.
+  if (currentLabels.every((l) => l === '')) return '';
+
+  const groupKey = `${methodName}#${arity}`;
+  const group = collisionGroups?.get(groupKey) ?? _buildGroup(methodMap, methodName, arity);
+  if (group.length < 2) return '';
+
+  const currentSig = currentLabels.join(',');
+  const allSame = group.every(
+    (info) => info.parameters.map((p) => p.label ?? '').join(',') === currentSig,
+  );
+  if (allSame) return '';
+
+  return `~L${currentSig}`;
 }
 
 /** Fallback: build a same-arity group by scanning the full map (O(N)). */
@@ -148,17 +179,68 @@ export function constTagForId(
   return '';
 }
 
+/**
+ * Disambiguate function-template overloads whose normalized parameter types
+ * intentionally collapse to the same placeholder token (`T`, `U`, ...), but
+ * whose C++ sidecar shape is semantically different (`T` vs `T*` / `T&`).
+ *
+ * Kept intentionally narrow: concrete types already use the existing raw-type
+ * overload tag, and non-template languages should not acquire sidecar-shaped
+ * IDs.
+ */
+export function parameterShapeIdTag(
+  parameterTypes?: readonly string[],
+  parameterTypeClasses?: readonly ParameterTypeClass[],
+): string {
+  if (
+    parameterTypes === undefined ||
+    parameterTypeClasses === undefined ||
+    parameterTypes.length === 0
+  ) {
+    return '';
+  }
+  let hasTemplatePlaceholder = false;
+  let hasDisambiguatingShape = false;
+  const parts: string[] = [];
+  for (let i = 0; i < parameterTypes.length; i++) {
+    const type = parameterTypes[i];
+    const typeClass = parameterTypeClasses[i];
+    if (typeClass === undefined) return '';
+    if (/^[A-Z]\w*$/.test(type)) hasTemplatePlaceholder = true;
+    if (
+      typeClass.indirection !== 'value' ||
+      typeClass.pointerDepth > 0 ||
+      (typeClass.cv !== 'none' && typeClass.cv !== 'unknown')
+    ) {
+      hasDisambiguatingShape = true;
+    }
+    parts.push(
+      `${type}:${typeClass.cv}:${typeClass.indirection}:${typeClass.pointerDepth.toString()}`,
+    );
+  }
+  if (!hasTemplatePlaceholder || !hasDisambiguatingShape) return '';
+  return `~shape:${parts.join('|')}`;
+}
+
 /** Convert MethodInfo from methodExtractor into flat properties for a graph node. */
 export function buildMethodProps(info: MethodInfo): Record<string, unknown> {
   const types: string[] = [];
+  const typeClasses: ParameterTypeClass[] = [];
   const labels: string[] = [];
+  let hasAnyLabel = false;
   let optionalCount = 0;
   let hasVariadic = false;
   for (const p of info.parameters) {
     if (p.type !== null) types.push(p.type);
-    if (p.label != null) labels.push(p.label);
+    if (p.typeClass !== undefined) typeClasses.push(p.typeClass);
     if (p.isOptional) optionalCount++;
     if (p.isVariadic) hasVariadic = true;
+    if (p.label !== undefined && p.label !== null) {
+      labels.push(p.label);
+      if (p.label !== '') hasAnyLabel = true;
+    } else {
+      labels.push('');
+    }
   }
   return {
     parameterCount: hasVariadic ? undefined : info.parameters.length,
@@ -166,7 +248,13 @@ export function buildMethodProps(info: MethodInfo): Record<string, unknown> {
       ? { requiredParameterCount: info.parameters.length - optionalCount }
       : {}),
     ...(types.length > 0 ? { parameterTypes: types } : {}),
-    ...(labels.length > 0 ? { parameterLabels: labels } : {}),
+    // Argument-label sidecar — only for languages that actually assign labels
+    // (Swift). Absent otherwise so label-less languages keep byte-identical
+    // node properties.
+    ...(hasAnyLabel ? { parameterLabels: labels } : {}),
+    ...(typeClasses.length === info.parameters.length && typeClasses.length > 0
+      ? { parameterTypeClasses: typeClasses }
+      : {}),
     returnType: info.returnType ?? undefined,
     visibility: info.visibility,
     isStatic: info.isStatic,
@@ -177,6 +265,7 @@ export function buildMethodProps(info: MethodInfo): Record<string, unknown> {
     ...(info.isAsync ? { isAsync: info.isAsync } : {}),
     ...(info.isPartial ? { isPartial: info.isPartial } : {}),
     ...(info.isConst ? { isConst: info.isConst } : {}),
+    ...(info.isDeleted ? { isDeleted: info.isDeleted } : {}),
     ...(info.annotations.length > 0 ? { annotations: info.annotations } : {}),
   };
 }

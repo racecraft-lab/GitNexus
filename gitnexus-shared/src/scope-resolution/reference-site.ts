@@ -21,6 +21,7 @@
  * (defined in `./types.ts`).
  */
 
+import type { ParameterTypeClass } from './symbol-definition.js';
 import type { Range, ScopeId } from './types.js';
 
 /**
@@ -36,7 +37,12 @@ export type ReferenceKind =
   | 'write'
   | 'type-reference'
   | 'inherits'
-  | 'import-use';
+  | 'import-use'
+  // A macro invocation (`log!(...)` / `vec![...]`). Resolved against
+  // `Macro`-labeled definitions ONLY (see `MacroRegistry`) so a macro
+  // never aliases a same-named free function — macros and functions are
+  // disjoint namespaces. Emitted as a `USES` edge, not `CALLS`.
+  | 'macro';
 
 /**
  * How a call site binds its target. Informs `Registry.lookup` Step 2
@@ -53,6 +59,18 @@ export type CallForm = 'free' | 'member' | 'constructor' | 'index';
 export interface ReferenceSite {
   /** The name being referenced (e.g., `'save'`, `'User'`, `'count'`). */
   readonly name: string;
+  /**
+   * Optional raw, qualified form of the referenced name when the source wrote
+   * a qualified path (e.g. a C++ base `struct D : Other::Inner` yields
+   * `'Other::Inner'`). `name` keeps the simple tail (`'Inner'`) for the existing
+   * scope-chain contract; resolution normalizes this via `normalizeQualifiedName`
+   * and resolves it against the full-path `QualifiedNameIndex` BEFORE the
+   * simple-tail walk, so a same-tail nested base resolves to the correct
+   * sibling instead of the first-inserted one (issue #1982). Populated only by
+   * per-language captures that emit `@reference.qualified-name`; absent
+   * otherwise, in which case resolution is unchanged.
+   */
+  readonly rawQualifiedName?: string;
   /** Source-text range of this reference. */
   readonly atRange: Range;
   /**
@@ -80,8 +98,19 @@ export interface ReferenceSite {
    */
   readonly argumentTypes?: readonly string[];
   /**
-   * Argument labels at the call site. Empty string means no written label
-   * (for example `_` parameters or first/trailing-closure arguments).
+   * Optional per-argument type-shape sidecar for languages that need
+   * cv/ref/pointer distinctions during constraint filtering. This is
+   * intentionally separate from `argumentTypes`, which stays normalized
+   * for existing overload narrowing and conversion-rank logic.
+   */
+  readonly argumentTypeClasses?: readonly ParameterTypeClass[];
+  /**
+   * Optional per-argument external/call-site labels for languages with
+   * argument labels (Swift `find(id: 42)` → `['id']`). One entry per
+   * positional argument; an empty-string entry means the argument had no
+   * label (positional / trailing closure). Consumed only by the label axis
+   * in `narrowOverloadCandidates`; absent for languages without labels, so
+   * overload narrowing is unchanged for them.
    */
   readonly argumentLabels?: readonly string[];
 }

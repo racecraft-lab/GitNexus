@@ -17,6 +17,7 @@ import { readFileContents } from '../filesystem-walker.js';
 import { isDev } from '../utils/env.js';
 import type { GraphNode } from 'gitnexus-shared';
 
+import { logger } from '../../logger.js';
 export interface ToolDef {
   name: string;
   filePath: string;
@@ -114,7 +115,7 @@ export const toolsPhase: PipelinePhase<ToolsOutput> = {
       }
 
       if (isDev) {
-        console.log(`🔧 Tool registry: ${toolDefs.length} tools detected`);
+        logger.info(`🔧 Tool registry: ${toolDefs.length} tools detected`);
       }
     }
 

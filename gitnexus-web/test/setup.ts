@@ -1,54 +1,41 @@
 import { beforeEach } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 
-function createMemoryStorage(): Storage {
-  const store = new Map<string, string>();
-  return {
-    get length() {
-      return store.size;
-    },
-    clear() {
-      store.clear();
-    },
-    getItem(key: string) {
-      return store.get(String(key)) ?? null;
-    },
-    key(index: number) {
-      return Array.from(store.keys())[index] ?? null;
-    },
-    removeItem(key: string) {
-      store.delete(String(key));
-    },
-    setItem(key: string, value: string) {
-      store.set(String(key), String(value));
-    },
-  };
-}
+const I18N_LANGUAGE_STORAGE_KEY = 'gitnexus.lng';
 
-const testStorage: Record<'localStorage' | 'sessionStorage', Storage> = {
-  localStorage: createMemoryStorage(),
-  sessionStorage: createMemoryStorage(),
-};
-
-function installJsdomStorageGlobal(name: 'localStorage' | 'sessionStorage'): void {
-  const storage = testStorage[name];
-  Object.defineProperty(globalThis, name, {
-    value: storage,
-    configurable: true,
-    writable: true,
-  });
-  if (globalThis.window !== undefined) {
-    Object.defineProperty(globalThis.window, name, {
-      value: storage,
-      configurable: true,
-    });
+function ensureStorage(name: 'localStorage' | 'sessionStorage') {
+  const current = globalThis[name];
+  if (
+    current &&
+    typeof current.getItem === 'function' &&
+    typeof current.removeItem === 'function'
+  ) {
+    return;
   }
+
+  const store = new Map<string, string>();
+  Object.defineProperty(globalThis, name, {
+    configurable: true,
+    value: {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => store.set(key, String(value)),
+      removeItem: (key: string) => store.delete(key),
+      clear: () => store.clear(),
+      key: (index: number) => Array.from(store.keys())[index] ?? null,
+      get length() {
+        return store.size;
+      },
+    },
+  });
 }
+
+ensureStorage('localStorage');
+ensureStorage('sessionStorage');
+localStorage.removeItem(I18N_LANGUAGE_STORAGE_KEY);
 
 // Reset storage between tests
 beforeEach(() => {
-  installJsdomStorageGlobal('sessionStorage');
-  installJsdomStorageGlobal('localStorage');
-  globalThis.sessionStorage.clear();
-  globalThis.localStorage.clear();
+  sessionStorage.removeItem('gitnexus-llm-settings');
+  localStorage.removeItem('gitnexus-llm-settings'); // legacy key (migration)
+  localStorage.removeItem(I18N_LANGUAGE_STORAGE_KEY);
 });

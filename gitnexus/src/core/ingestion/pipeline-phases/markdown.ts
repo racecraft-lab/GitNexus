@@ -15,6 +15,7 @@ import { readFileContents } from '../filesystem-walker.js';
 import type { StructureOutput } from './structure.js';
 import { isDev } from '../utils/env.js';
 
+import { logger } from '../../logger.js';
 export interface MarkdownOutput {
   /** Number of markdown sections extracted. */
   sections: number;
@@ -32,12 +33,7 @@ export const markdownPhase: PipelinePhase<MarkdownOutput> = {
   ): Promise<MarkdownOutput> {
     const { scannedFiles, allPathSet } = getPhaseOutput<StructureOutput>(deps, 'structure');
 
-    const reindexPaths = ctx.options?.reindexPaths ? new Set(ctx.options.reindexPaths) : undefined;
-    const mdScanned = scannedFiles.filter(
-      (f) =>
-        (reindexPaths === undefined || reindexPaths.has(f.path)) &&
-        (f.path.endsWith('.md') || f.path.endsWith('.mdx')),
-    );
+    const mdScanned = scannedFiles.filter((f) => f.path.endsWith('.md') || f.path.endsWith('.mdx'));
 
     if (mdScanned.length === 0) {
       return { sections: 0, links: 0 };
@@ -53,7 +49,7 @@ export const markdownPhase: PipelinePhase<MarkdownOutput> = {
     const mdResult = processMarkdown(ctx.graph, mdFiles, allPathSet);
 
     if (isDev) {
-      console.log(
+      logger.info(
         `  Markdown: ${mdResult.sections} sections, ${mdResult.links} cross-links from ${mdFiles.length} files`,
       );
     }

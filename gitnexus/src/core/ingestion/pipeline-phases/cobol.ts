@@ -15,6 +15,7 @@ import { readFileContents } from '../filesystem-walker.js';
 import type { StructureOutput } from './structure.js';
 import { isDev } from '../utils/env.js';
 
+import { logger } from '../../logger.js';
 export interface CobolOutput {
   programs: number;
   paragraphs: number;
@@ -31,12 +32,7 @@ export const cobolPhase: PipelinePhase<CobolOutput> = {
   ): Promise<CobolOutput> {
     const { scannedFiles, allPathSet } = getPhaseOutput<StructureOutput>(deps, 'structure');
 
-    const reindexPaths = ctx.options?.reindexPaths ? new Set(ctx.options.reindexPaths) : undefined;
-    const cobolScanned = scannedFiles.filter(
-      (f) =>
-        (reindexPaths === undefined || reindexPaths.has(f.path)) &&
-        (isCobolFile(f.path) || isJclFile(f.path)),
-    );
+    const cobolScanned = scannedFiles.filter((f) => isCobolFile(f.path) || isJclFile(f.path));
 
     if (cobolScanned.length === 0) {
       return { programs: 0, paragraphs: 0, sections: 0 };
@@ -52,7 +48,7 @@ export const cobolPhase: PipelinePhase<CobolOutput> = {
     const cobolResult = processCobol(ctx.graph, cobolFiles, allPathSet);
 
     if (isDev) {
-      console.log(
+      logger.info(
         `  COBOL: ${cobolResult.programs} programs, ${cobolResult.paragraphs} paragraphs, ${cobolResult.sections} sections from ${cobolFiles.length} files`,
       );
       if (
@@ -60,12 +56,12 @@ export const cobolPhase: PipelinePhase<CobolOutput> = {
         cobolResult.execCicsBlocks > 0 ||
         cobolResult.entryPoints > 0
       ) {
-        console.log(
+        logger.info(
           `  COBOL enriched: ${cobolResult.execSqlBlocks} SQL blocks, ${cobolResult.execCicsBlocks} CICS blocks, ${cobolResult.entryPoints} entry points, ${cobolResult.moves} moves, ${cobolResult.fileDeclarations} file declarations`,
         );
       }
       if (cobolResult.jclJobs > 0) {
-        console.log(`  JCL: ${cobolResult.jclJobs} jobs, ${cobolResult.jclSteps} steps`);
+        logger.info(`  JCL: ${cobolResult.jclJobs} jobs, ${cobolResult.jclSteps} steps`);
       }
     }
 
