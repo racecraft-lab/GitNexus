@@ -103,7 +103,12 @@ export function buildSuffixIndex(normalizedFileList: string[], allFileList: stri
     // Index all suffixes: "a/b/c.java" -> ["c.java", "b/c.java", "a/b/c.java"]
     for (let j = parts.length - 1; j >= 0; j--) {
       const suffix = parts.slice(j).join('/');
-      // Only store first match (longest path wins for ambiguous suffixes)
+      // Keep the FIRST file inserted for a given suffix. Note this is
+      // insertion order (i.e. the caller's file-list order), NOT "longest path
+      // wins" as an earlier comment here claimed — for a colliding suffix the
+      // winner is arbitrary. Callers that cannot tolerate an arbitrary winner
+      // should constrain the candidate suffixes they ask for; see
+      // `requireDirectorySegment` on suffixResolve.
       if (!exactMap.has(suffix)) {
         exactMap.set(suffix, original);
       }
@@ -145,18 +150,41 @@ export function buildSuffixIndex(normalizedFileList: string[], allFileList: stri
 
 /**
  * Suffix-based resolution using index. O(1) per lookup instead of O(files).
+ *
+ * `requireDirectorySegment` (opt-in) rejects any candidate suffix that is a
+ * BARE FILENAME with no directory component — `index.tsx`, `types.ts`. The
+ * suffix loop walks progressively shorter suffixes, so its final iteration
+ * degenerates to matching on the last path segment alone, and for languages
+ * whose bare specifiers name PACKAGES rather than paths that match is always a
+ * coincidence. Left unguarded it fabricates edges: in a real monorepo,
+ * `import { GraphQLError } from 'graphql/index'` resolved to
+ * `apps/frontend/src/index.tsx` purely because both end in `index`, and
+ * `@jest/types` resolved to an unrelated `types.ts` in another package. Because
+ * `EXTENSIONS` also contains `/index.*` entries, a legitimate workspace hit like
+ * `@repo/typescript-config` -> `typescript-config/index.ts` still carries a
+ * separator and survives the guard, so specificity is preserved rather than
+ * traded away.
+ *
+ * Opt-in rather than default: for Python and the JVM languages a bare-filename
+ * match is legitimate (`import config` -> `config.py`), and Python resolves
+ * proximity-first before reaching here.
  */
 export function suffixResolve(
   pathParts: string[],
   normalizedFileList: string[],
   allFileList: string[],
   index?: SuffixIndex,
+  requireDirectorySegment = false,
 ): string | null {
+  const admissible = (suffixWithExt: string): boolean =>
+    !requireDirectorySegment || suffixWithExt.includes('/');
+
   if (index) {
     for (let i = 0; i < pathParts.length; i++) {
       const suffix = pathParts.slice(i).join('/');
       for (const ext of EXTENSIONS) {
         const suffixWithExt = suffix + ext;
+        if (!admissible(suffixWithExt)) continue;
         const result = index.get(suffixWithExt) || index.getInsensitive(suffixWithExt);
         if (result) return result;
       }
@@ -169,6 +197,7 @@ export function suffixResolve(
     const suffix = pathParts.slice(i).join('/');
     for (const ext of EXTENSIONS) {
       const suffixWithExt = suffix + ext;
+      if (!admissible(suffixWithExt)) continue;
       const suffixPattern = '/' + suffixWithExt;
       const matchIdx = normalizedFileList.findIndex(
         (filePath) =>

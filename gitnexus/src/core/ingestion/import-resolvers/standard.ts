@@ -79,9 +79,11 @@ export const resolveImportPath = (
           if (esmResolved) return cache(esmResolved);
         }
 
-        // Try suffix matching as fallback
+        // Try suffix matching as fallback. Directory segment required: this
+        // branch is TS/JS-only, where a bare-filename match is a coincidence
+        // rather than a resolution (see suffixResolve).
         const parts = rewritten.split('/').filter(Boolean);
-        const suffixResult = suffixResolve(parts, normalizedFileList, allFileList, index);
+        const suffixResult = suffixResolve(parts, normalizedFileList, allFileList, index, true);
         if (suffixResult) return cache(suffixResult);
       }
     }
@@ -161,7 +163,20 @@ export const resolveImportPath = (
   const pathLike = importPath.includes('/') || isCpp ? importPath : importPath.replace(/\./g, '/');
   const pathParts = pathLike.split('/').filter(Boolean);
 
-  const resolved = suffixResolve(pathParts, normalizedFileList, allFileList, index);
+  // TS/JS bare specifiers name PACKAGES, not paths, so a match on the final
+  // bare filename is a basename coincidence and not a resolution. Require a
+  // directory segment for those languages only; Python (proximity-first) and
+  // the JVM/Go/Rust families legitimately resolve single-segment names.
+  const requireDirectorySegment =
+    language === SupportedLanguages.TypeScript || language === SupportedLanguages.JavaScript;
+
+  const resolved = suffixResolve(
+    pathParts,
+    normalizedFileList,
+    allFileList,
+    index,
+    requireDirectorySegment,
+  );
   return cache(resolved);
 };
 
