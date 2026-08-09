@@ -523,6 +523,54 @@ type ReexportClosureEntry = { readonly def: SymbolDefinition; readonly via: read
 type FileReexportClosure = ReadonlyMap<string, ReexportClosureEntry>;
 
 /**
+ * One file's own export surface: `simpleName → the def an importer should
+ * bind to`, collapsing same-name defs by the SAME preference
+ * `findExportByName` applies (callable / type-like wins; otherwise
+ * first-seen wins). Values are drawn only from the file's `localDefs` —
+ * its re-export chain lives in the closure, not here.
+ */
+type LocalExportSurface = ReadonlyMap<string, SymbolDefinition>;
+
+/**
+ * Build (and memoise) a file's `LocalExportSurface`.
+ *
+ * Memoised per `filePath` for the whole finalize pass because the wildcard
+ * fan-out reads it once per `export *` draft pointing at the file — a
+ * heavily-used barrel target is read by every barrel that re-exports it —
+ * and because a cyclic SCC re-enters `populateFileClosure` up to
+ * `|SCC| + 1` times. Building it is one O(D) pass over `localDefs`;
+ * without the memo the fan-out would be O(D) per draft per iteration, and
+ * calling `findExportByName` per def would make it O(D²).
+ */
+function localExportSurface(
+  targetModule: FinalizeFile,
+  memo: Map<string, LocalExportSurface>,
+): LocalExportSurface {
+  const cached = memo.get(targetModule.filePath);
+  if (cached !== undefined) return cached;
+
+  const surface = new Map<string, SymbolDefinition>();
+  for (const def of targetModule.localDefs) {
+    const name = deriveSimpleName(def);
+    if (name === null) continue;
+    const existing = surface.get(name);
+    if (existing === undefined) {
+      surface.set(name, def);
+      continue;
+    }
+    // Upgrade a value shadow to the callable / type-like def; among defs of
+    // equal standing the first stays. This is exactly `findExportByName`'s
+    // "first callable, else first of any kind" over the same list.
+    if (!isCallableOrTypeLike(existing.type) && isCallableOrTypeLike(def.type)) {
+      surface.set(name, def);
+    }
+  }
+
+  memo.set(targetModule.filePath, surface);
+  return surface;
+}
+
+/**
  * Build per-file re-export closures.
  *
  * **Algorithm.** Iterative SCC-condensed reverse-topological propagation,
@@ -575,6 +623,9 @@ function buildReexportClosures(
 ): ReadonlyMap<string, FileReexportClosure> {
   const closures = new Map<string, Map<string, ReexportClosureEntry>>();
   for (const file of files) closures.set(file.filePath, new Map());
+  // Shared across every SCC and every fixpoint iteration below — see
+  // `localExportSurface`. Lives for exactly this closure build.
+  const surfaces = new Map<string, LocalExportSurface>();
 
   // ── Step 1: build the re-export sub-graph (only resolvable
   // reexport/wildcard targets contribute edges).
@@ -604,7 +655,7 @@ function buildReexportClosures(
     if (!scc.isCycle) {
       const filePath = scc.files[0];
       if (filePath !== undefined) {
-        populateFileClosure(filePath, byFilePath, edgeIndex, closures);
+        populateFileClosure(filePath, byFilePath, edgeIndex, closures, surfaces);
       }
       continue;
     }
@@ -618,7 +669,7 @@ function buildReexportClosures(
       progressed = false;
       iter++;
       for (const filePath of scc.files) {
-        if (populateFileClosure(filePath, byFilePath, edgeIndex, closures)) {
+        if (populateFileClosure(filePath, byFilePath, edgeIndex, closures, surfaces)) {
           progressed = true;
         }
       }
@@ -647,6 +698,7 @@ function populateFileClosure(
   byFilePath: ReadonlyMap<string, FinalizeFile>,
   edgeIndex: ReadonlyMap<string, ImportEdgeDraft[]>,
   closures: Map<string, Map<string, ReexportClosureEntry>>,
+  surfaces: Map<string, LocalExportSurface>,
 ): boolean {
   const myClosure = closures.get(filePath);
   if (myClosure === undefined) return false;
@@ -693,9 +745,16 @@ function populateFileClosure(
     const targetModule = byFilePath.get(targetFile);
     if (targetModule === undefined) continue;
 
-    for (const def of targetModule.localDefs) {
-      const name = deriveSimpleName(def);
-      if (name === null || myClosure.has(name)) continue;
+    // Fan out the target's own defs through its callable-preferring export
+    // surface, NOT by iterating `localDefs` first-wins. `export const fn =
+    // () => {}` emits both a `Variable` and a `Function` def for one
+    // construct, so a bare first-wins scan let capture order decide, and
+    // when the `Variable` won the importer bound to a non-callable and the
+    // call site produced no CALLS edge. The named-re-export branch above
+    // never had this hole because `findExportByName` already applies the
+    // preference; this makes the star branch agree with it.
+    for (const [name, def] of localExportSurface(targetModule, surfaces)) {
+      if (myClosure.has(name)) continue;
       myClosure.set(name, { def, via: Object.freeze([targetFile]) });
     }
     const targetClosure = closures.get(targetFile);
