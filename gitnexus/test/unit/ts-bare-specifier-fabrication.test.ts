@@ -117,7 +117,7 @@ describe('TypeScript bare specifiers do not fabricate edges by basename', () => 
     }
   });
 
-  it('STILL resolves a genuine workspace package via its index file', () => {
+  it('does not resolve a bare package name through an /index.* extension', () => {
     const ctx = makeCtx(MONOREPO);
     const result = resolve(
       'apps/api/src/cards/integrations/loanPro/createCard.ts',
@@ -125,9 +125,28 @@ describe('TypeScript bare specifiers do not fabricate edges by basename', () => 
       SupportedLanguages.TypeScript,
       ctx,
     );
-    // 'typescript-config' + '/index.ts' keeps a directory segment, so the
-    // guard admits it. Regressing this would trade fabrication for blindness.
-    expect(result).toBe('packages/typescript-config/index.ts');
+    // An earlier version of this guard tested `suffix + ext` and so ADMITTED
+    // this, on the reasoning that '/index.ts' supplied a directory segment.
+    // That same hole let '@jest/types' resolve to .../util/types/index.ts and
+    // left 19 fabricated edges in a real repo. The separator must come from the
+    // specifier, not the extension. Accepted cost: a bare workspace specifier
+    // no longer resolves this way. Real layouts are packages/<name>/src/index.ts,
+    // which suffix matching never reached anyway.
+    expect(result).toBeNull();
+  });
+
+  it('does not resolve a scoped package through an /index.* extension (the 19-edge hole)', () => {
+    const ctx = makeCtx([
+      'apps/api/src/unit-tests/jest.integration.config.ts',
+      'apps/frontend/src/util/types/index.ts',
+    ]);
+    const result = resolve(
+      'apps/api/src/unit-tests/jest.integration.config.ts',
+      '@jest/types',
+      SupportedLanguages.TypeScript,
+      ctx,
+    );
+    expect(result).toBeNull();
   });
 
   it('STILL resolves relative imports unchanged', () => {
@@ -153,10 +172,19 @@ describe('suffixResolve requireDirectorySegment flag', () => {
     ).toBeNull();
   });
 
-  it('admits matches that carry a directory segment when enabled', () => {
-    expect(suffixResolve(['typescript-config'], ctx.normalized, ctx.files, ctx.index, true)).toBe(
-      'packages/typescript-config/index.ts',
-    );
+  it('admits a multi-segment specifier suffix when enabled', () => {
+    const deep = makeCtx(['packages/typescript-config/index.ts']);
+    // Two real segments from the specifier itself, not one plus an extension.
+    expect(
+      suffixResolve(['typescript-config', 'index'], deep.normalized, deep.files, deep.index, true),
+    ).toBe('packages/typescript-config/index.ts');
+  });
+
+  it('rejects a bare segment even when an /index.* extension would supply a separator', () => {
+    const deep = makeCtx(['packages/typescript-config/index.ts']);
+    expect(
+      suffixResolve(['typescript-config'], deep.normalized, deep.files, deep.index, true),
+    ).toBeNull();
   });
 
   it('applies the same guard on the linear-scan path (no index)', () => {

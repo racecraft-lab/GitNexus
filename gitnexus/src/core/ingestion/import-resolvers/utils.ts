@@ -151,19 +151,29 @@ export function buildSuffixIndex(normalizedFileList: string[], allFileList: stri
 /**
  * Suffix-based resolution using index. O(1) per lookup instead of O(files).
  *
- * `requireDirectorySegment` (opt-in) rejects any candidate suffix that is a
- * BARE FILENAME with no directory component — `index.tsx`, `types.ts`. The
- * suffix loop walks progressively shorter suffixes, so its final iteration
- * degenerates to matching on the last path segment alone, and for languages
- * whose bare specifiers name PACKAGES rather than paths that match is always a
- * coincidence. Left unguarded it fabricates edges: in a real monorepo,
+ * `requireDirectorySegment` (opt-in) requires the SPECIFIER's own suffix to
+ * contain a directory separator, rejecting candidates that rest on a bare
+ * filename. The suffix loop walks progressively shorter suffixes, so its final
+ * iteration degenerates to matching on the last path segment alone, and for
+ * languages whose bare specifiers name PACKAGES rather than paths that match is
+ * always a coincidence. Left unguarded it fabricates edges: in a real monorepo
  * `import { GraphQLError } from 'graphql/index'` resolved to
- * `apps/frontend/src/index.tsx` purely because both end in `index`, and
- * `@jest/types` resolved to an unrelated `types.ts` in another package. Because
- * `EXTENSIONS` also contains `/index.*` entries, a legitimate workspace hit like
- * `@repo/typescript-config` -> `typescript-config/index.ts` still carries a
- * separator and survives the guard, so specificity is preserved rather than
- * traded away.
+ * `apps/frontend/src/index.tsx` purely because both end in `index`.
+ *
+ * The check is on `suffix`, deliberately, NOT on `suffix + ext`. EXTENSIONS
+ * contains `/index.tsx`, `/index.ts`, `/__init__.py` and `/mod.rs`, so testing
+ * the post-extension string lets a bare filename smuggle a separator in:
+ * `@jest/types` becomes `types` + `/index.ts` = `types/index.ts`, which reads as
+ * two segments and matched an unrelated `.../util/types/index.ts`. Measured on a
+ * real monorepo: guarding the post-extension string cut fabricated cross-app
+ * edges from 104 to 25; guarding `suffix` removes the rest.
+ *
+ * The cost is real and accepted: a bare workspace specifier can no longer
+ * resolve through an `/index.*` extension, e.g. `@repo/typescript-config` ->
+ * `typescript-config/index.ts`. That form is largely theoretical here — real
+ * workspace layouts put the entry at `packages/<name>/src/index.ts`, which this
+ * matching never reached anyway — and a missing edge is far cheaper than a
+ * confidently wrong one.
  *
  * Opt-in rather than default: for Python and the JVM languages a bare-filename
  * match is legitimate (`import config` -> `config.py`), and Python resolves
@@ -176,15 +186,21 @@ export function suffixResolve(
   index?: SuffixIndex,
   requireDirectorySegment = false,
 ): string | null {
-  const admissible = (suffixWithExt: string): boolean =>
-    !requireDirectorySegment || suffixWithExt.includes('/');
+  // The directory segment must come from the SPECIFIER, not from the extension.
+  // EXTENSIONS contains '/index.tsx', '/index.ts', '/__init__.py' and friends,
+  // so testing the post-extension string lets a bare filename smuggle a
+  // separator in: '@jest/types' -> suffix 'types' + '/index.ts' reads as
+  // 'types/index.ts' and matched an unrelated .../util/types/index.ts. Measured:
+  // guarding the post-extension string still left 19 fabricated edges from this
+  // one hole; guarding `suffix` removes them.
+  const admissible = (suffix: string): boolean => !requireDirectorySegment || suffix.includes('/');
 
   if (index) {
     for (let i = 0; i < pathParts.length; i++) {
       const suffix = pathParts.slice(i).join('/');
+      if (!admissible(suffix)) continue;
       for (const ext of EXTENSIONS) {
         const suffixWithExt = suffix + ext;
-        if (!admissible(suffixWithExt)) continue;
         const result = index.get(suffixWithExt) || index.getInsensitive(suffixWithExt);
         if (result) return result;
       }
@@ -195,9 +211,9 @@ export function suffixResolve(
   // Fallback: linear scan (for backward compatibility)
   for (let i = 0; i < pathParts.length; i++) {
     const suffix = pathParts.slice(i).join('/');
+    if (!admissible(suffix)) continue;
     for (const ext of EXTENSIONS) {
       const suffixWithExt = suffix + ext;
-      if (!admissible(suffixWithExt)) continue;
       const suffixPattern = '/' + suffixWithExt;
       const matchIdx = normalizedFileList.findIndex(
         (filePath) =>
