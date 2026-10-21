@@ -22,6 +22,14 @@
 #     --format '{{json .Manifest.Digest}}'
 FROM mcr.microsoft.com/devcontainers/typescript-node@sha256:7c2e711a4f7b02f32d2da16192d5e05aa7c95279be4ce889cff5df316f251c1d
 
+# Refresh the frozen base's Node runtime before any networked CLI installers run.
+ENV NODE_VERSION=22.23.4
+RUN su node -c 'umask 0002 && . "$NVM_DIR/nvm.sh" \
+    && nvm install "$NODE_VERSION" \
+    && nvm alias default "$NODE_VERSION" \
+    && nvm use default \
+    && test "$(node --version)" = "v${NODE_VERSION}"'
+
 # Bun is installed via the official remote script (bun.sh/install), pinned by
 # version. Claude Code and Cursor also use official install scripts (no version
 # to pin). To harden Bun: switch to a pinned tarball + per-arch sha256
@@ -66,6 +74,9 @@ RUN mkdir -p \
         /commandhistory
 
 USER ${USERNAME}
+
+RUN test "$(node --version)" = "v${NODE_VERSION}" \
+    && test -w "$(npm prefix --global)/lib/node_modules"
 
 # Install Claude Code via the official native installer. Downloads the latest
 # self-contained binary for the running platform and places it at
